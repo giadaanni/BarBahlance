@@ -16,6 +16,7 @@
       top:max(10px, env(safe-area-inset-top));
       display:flex;gap:10px;align-items:center;justify-content:space-between;
       pointer-events:none;
+      z-index:5;
     }
     .pill{
       pointer-events:auto;
@@ -37,8 +38,8 @@
       max-width:min(520px, calc(100vw - 24px));
       text-align:center;
       backdrop-filter: blur(8px);
+      z-index:5;
     }
-    /* Clear game over overlay (optional but makes "lose" obvious) */
     #overlay{
       position:fixed; inset:0;
       display:none; align-items:center; justify-content:center;
@@ -52,7 +53,7 @@
       border-radius:20px;
       padding:18px 18px 16px;
       text-align:center;
-      width:min(320px, calc(100vw - 40px));
+      width:min(330px, calc(100vw - 40px));
     }
     #overlay .title{font-size:22px; font-weight:800; margin:0 0 6px;}
     #overlay .sub{font-size:13px; color:var(--muted); margin:0 0 12px;}
@@ -155,7 +156,7 @@
       Bodies.rectangle(WORLD_W/2, WORLD_H + wallThickness/2, WORLD_W + 800, wallThickness, { isStatic:true })
     ]);
 
-    // ---- Tray (compound), fixed position, angle controlled (game-first) ----
+    // ---- Tray (compound), fixed position, angle controlled ----
     const wrist = { x: WORLD_W*0.5, y: WORLD_H*0.68 };
     const TRAY_LEN = 640;
     const TRAY_THK = 34;
@@ -170,7 +171,7 @@
         frictionStatic: 1.25,
         restitution: 0.02,
         density: 0.0042,
-        inertia: Infinity,   // stops collision-induced wobble
+        inertia: Infinity,
         label: "tray"
       });
     }
@@ -186,7 +187,7 @@
 
     // ---- Control ----
     let targetAngle = 0;
-    const MAX_ANGLE = 0.36; // controllabile da subito
+    const MAX_ANGLE = 0.36;
     const SENS = 2.0;
     let dragging=false, lastX=0;
 
@@ -214,7 +215,6 @@
     canvas.addEventListener('touchend', onUp, { passive:true });
 
     function controlTray(dt){
-      // follow target angle smoothly (governable)
       const follow = 1 - Math.exp(-18 * dt);
       const newAngle = tray.angle + (targetAngle - tray.angle) * follow;
 
@@ -222,15 +222,14 @@
       Body.setAngle(tray, newAngle);
       Body.setAngularVelocity(tray, clamp(angVel, -3.2, 3.2));
 
-      // keep position fixed
       Body.setPosition(tray, trayHome);
       Body.setVelocity(tray, { x: 0, y: 0 });
     }
 
-    // ---- Iconic objects (compound bodies) ----
+    // ---- Game state ----
     const MAX_ITEMS = 10;
     let alive=true, score=0, t=0;
-    let spawnEvery=2.6, nextSpawn=2.6;
+    let spawnEvery=2.8, nextSpawn=2.8; // più lento
 
     const droplets=[];
     function addDroplet(x,y,vx,vy,color){ droplets.push({x,y,vx,vy,color,life:1.0}); }
@@ -245,12 +244,13 @@
       return n;
     }
 
+    // ---- Iconic-ish shapes (compound) ----
     function makeTumbler(x,y){
       const shell = Bodies.rectangle(x, y-16, 72, 76, { chamfer:{radius:10} });
       const base  = Bodies.rectangle(x, y+22, 58, 20, { chamfer:{radius:8} });
       const cup = Body.create({
         parts:[shell, base],
-        friction: 0.95, restitution:0.02, density:0.0033, label:"tumbler"
+        friction: 0.95, restitution:0.01, density:0.0033, label:"tumbler"
       });
       cup.plugin = { liquid: { fill:0.78, slosh:0, color:"#6bdcff" } };
       return cup;
@@ -258,11 +258,12 @@
 
     function makeBottle(x,y){
       const body = Bodies.rectangle(x, y+20, 60, 120, { chamfer:{radius:12} });
-      const neck = Bodies.rectangle(x, y-58, 30, 52, { chamfer:{radius:10} });
-      const cap  = Bodies.rectangle(x, y-90, 34, 16, { chamfer:{radius:6} });
+      const shoulder = Bodies.rectangle(x, y-30, 52, 30, { chamfer:{radius:10} });
+      const neck = Bodies.rectangle(x, y-64, 28, 52, { chamfer:{radius:10} });
+      const cap  = Bodies.rectangle(x, y-96, 34, 16, { chamfer:{radius:6} });
       return Body.create({
-        parts:[body, neck, cap],
-        friction: 0.72, restitution:0.02, density:0.0040, label:"bottle"
+        parts:[body, shoulder, neck, cap],
+        friction: 0.72, restitution:0.01, density:0.0040, label:"bottle"
       });
     }
 
@@ -272,7 +273,7 @@
       const base = Bodies.rectangle(x, y+66, 84, 18, { chamfer:{radius:10} });
       const g = Body.create({
         parts:[bowl, stem, base],
-        friction: 0.62, restitution:0.03, density:0.0030, label:"wine"
+        friction: 0.62, restitution:0.01, density:0.0030, label:"wine"
       });
       g.plugin = { liquid: { fill:0.62, slosh:0, color:"#ff7a59" } };
       return g;
@@ -288,8 +289,11 @@
       else if (r < 0.78) body = makeWineGlass(x,y);
       else body = makeBottle(x,y);
 
-      // spawn with small random rotation to avoid perfect stacking
-      Body.setAngle(body, (Math.random()*0.16 - 0.08));
+      // IMPORTANT: arm the lose-check only when the body reaches tray height
+      body.plugin = body.plugin || {};
+      body.plugin.armed = false;
+
+      Body.setAngle(body, (Math.random()*0.14 - 0.07));
       World.add(world, body);
     }
 
@@ -298,15 +302,15 @@
       if (countItems() >= MAX_ITEMS) return;
       if (t < nextSpawn) return;
 
-      // slower and stays slow
-      const difficulty = Math.min(1, t/180);
-      spawnEvery = Math.max(1.8, spawnEvery * (0.996 - 0.0015*difficulty));
+      // resta lento (non accelera troppo)
+      const difficulty = Math.min(1, t/240);
+      spawnEvery = Math.max(2.0, spawnEvery * (0.997 - 0.0010*difficulty));
       nextSpawn = t + spawnEvery;
 
       spawnOne();
     }
 
-    // ---- Liquid fake ----
+    // ---- Liquids (fake) ----
     function updateLiquids(dt){
       const bodies = Composite.allBodies(world);
       for (const b of bodies) {
@@ -321,7 +325,7 @@
           const spillRate = (Math.abs(liq.slosh) - spillThresh) * 0.16;
           liq.fill = Math.max(0, liq.fill - spillRate * dt);
 
-          if (Math.random() < 0.16) {
+          if (Math.random() < 0.14) {
             addDroplet(b.position.x + (Math.random()*18-9), b.position.y - 70,
                       (Math.random()*60-30), 60 + Math.random()*70, liq.color);
           }
@@ -338,26 +342,38 @@
       }
     }
 
-    // ---- Lose condition: immediately when any object leaves tray footprint ----
+    // ---- Lose condition (correct): evaluate only after the body reaches tray height ----
     function isOnTray(body){
-      const dx = body.position.x - tray.position.x;
-      const dy = body.position.y - tray.position.y;
+      body.plugin = body.plugin || {};
+      if (body.plugin.armed !== true) {
+        // still in free fall above tray -> cannot "lose" yet
+        if (body.bounds.max.y < tray.bounds.min.y - 20) return true;
+        // reached tray zone (or passed it) -> from now on we evaluate off-tray
+        body.plugin.armed = true;
+      }
+
+      // compute in tray local coordinates using bottom-most point
+      const px = body.position.x;
+      const py = body.bounds.max.y;
+
+      const dx = px - tray.position.x;
+      const dy = py - tray.position.y;
 
       const cos = Math.cos(tray.angle), sin = Math.sin(tray.angle);
-
-      // tray local coords
       const u =  dx * cos + dy * sin;   // along tray
-      const v = -dx * sin + dy * cos;   // perpendicular to tray
+      const v = -dx * sin + dy * cos;   // perpendicular to tray plane
 
       const halfLen = TRAY_LEN * 0.5;
 
-      const uTol = halfLen - 14;  // inside lips
-      const vTolAbove = 120;      // allow stacks above
-      const vTolBelow = 30;       // below tray plane => off
+      // within tray lips (loose)
+      const uTol = halfLen - 10;
+
+      // below the tray plane enough -> fallen off
+      const vTolBelow = 46;
 
       if (u < -uTol || u > uTol) return false;
-      if (v > vTolAbove) return true;
       if (v < -vTolBelow) return false;
+
       return true;
     }
 
@@ -372,10 +388,7 @@
       const bodies = Composite.allBodies(world);
       for (const b of bodies) {
         if (b.label==="tray" || b.isStatic) continue;
-        if (!isOnTray(b)) {
-          gameOver();
-          return;
-        }
+        if (!isOnTray(b)) { gameOver(); return; }
       }
     }
 
@@ -390,8 +403,8 @@
       alive=true;
       score=0;
       t=0;
-      spawnEvery=2.6;
-      nextSpawn=2.6;
+      spawnEvery=2.8;
+      nextSpawn=2.8;
       targetAngle=0;
 
       Body.setAngle(tray, 0);
@@ -441,7 +454,6 @@
       ctx.translate(ox, oy);
       ctx.scale(s, s);
 
-      // arm
       ctx.save();
       ctx.translate(wrist.x, wrist.y + 250);
       ctx.rotate(-0.15);
@@ -450,7 +462,6 @@
       ctx.fill();
       ctx.restore();
 
-      // hand follows tray angle visually
       ctx.save();
       ctx.translate(wrist.x, wrist.y + 50);
       ctx.rotate(tray.angle * 0.95);
