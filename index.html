@@ -60,7 +60,7 @@
   <script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
   <script>
   (() => {
-    const { Engine, World, Bodies, Body, Composite } = Matter;
+    const { Engine, World, Bodies, Body, Composite, Constraint } = Matter;
 
     // ---- Canvas 2:3 fit (no scroll) ----
     const canvas = document.getElementById('c');
@@ -76,13 +76,13 @@
     const WORLD_W = 900;
     const WORLD_H = 1350;
 
-    let vw=0, vh=0, cw=0, ch=0, dpr=1;
+    let cw=0, ch=0, dpr=1;
 
     function resizeCanvas() {
-      ({ w: vw, h: vh } = getViewport());
+      const { w, h } = getViewport();
       dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
 
-      const targetH = Math.min(vh, vw * (RATIO_H / RATIO_W));
+      const targetH = Math.min(h, w * (RATIO_H / RATIO_W));
       const targetW = targetH * (RATIO_W / RATIO_H);
 
       cw = Math.floor(targetW);
@@ -101,11 +101,11 @@
     function worldToScreenScale() {
       return Math.min(cw / WORLD_W, ch / WORLD_H);
     }
-    function worldToScreen(x, y) {
+    function worldToScreen() {
       const s = worldToScreenScale();
       const ox = (cw - WORLD_W * s) / 2;
       const oy = (ch - WORLD_H * s) / 2;
-      return { x: ox + x * s, y: oy + y * s, s, ox, oy };
+      return { s, ox, oy };
     }
 
     // ---- HUD ----
@@ -116,62 +116,80 @@
     const hintEl = document.getElementById('hint');
 
     function setState(s){ stateEl.textContent = s; }
+    function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
 
     // ---- Physics ----
-    const engine = Engine.create();
+    const engine = Engine.create({ enableSleeping: true });
     engine.gravity.y = 1.0;
+    engine.positionIterations = 14;
+    engine.velocityIterations = 10;
+    engine.constraintIterations = 4;
     const world = engine.world;
 
-    // More stable solver
-    engine.positionIterations = 10;
-    engine.velocityIterations = 8;
+    // World bounds (loss checks use these too)
+    const wallThickness = 180;
+    World.add(world, [
+      Bodies.rectangle(WORLD_W/2, WORLD_H + wallThickness/2, WORLD_W + 800, wallThickness, { isStatic:true }),
+      Bodies.rectangle(-wallThickness/2, WORLD_H/2, wallThickness, WORLD_H + 800, { isStatic:true }),
+      Bodies.rectangle(WORLD_W + wallThickness/2, WORLD_H/2, wallThickness, WORLD_H + 800, { isStatic:true })
+    ]);
 
-    const wallThickness = 140;
-    const walls = [
-      Bodies.rectangle(WORLD_W/2, WORLD_H + wallThickness/2, WORLD_W + 600, wallThickness, { isStatic:true }),
-      Bodies.rectangle(-wallThickness/2, WORLD_H/2, wallThickness, WORLD_H + 600, { isStatic:true }),
-      Bodies.rectangle(WORLD_W + wallThickness/2, WORLD_H/2, wallThickness, WORLD_H + 600, { isStatic:true })
-    ];
-    World.add(world, walls);
+    // ---- Wrist + tray (no teleporting; real pivot constraint) ----
+    const wrist = { x: WORLD_W*0.5, y: WORLD_H*0.68 };
 
-    // Wrist + tray
-    const wrist = { x: WORLD_W*0.5, y: WORLD_H*0.64 };
+    // tray compound: plank + two low lips (all in one body => no "static rails teleport" bugs)
+    function makeTray(x,y){
+      const plank = Bodies.rectangle(x, y, 640, 34, { chamfer: { radius: 12 } });
+      const lipL  = Bodies.rectangle(x - 320 + 10, y - 10, 20, 28, { chamfer: { radius: 6 } });
+      const lipR  = Bodies.rectangle(x + 320 - 10, y - 10, 20, 28, { chamfer: { radius: 6 } });
 
-    const tray = Bodies.rectangle(wrist.x, wrist.y - 110, 640, 34, {
-      restitution: 0.03,
-      friction: 1.0,
-      frictionStatic: 1.2,
-      density: 0.0042,
-      label: "tray"
-    });
-    World.add(world, [tray]);
-
-    // Keep tray anchored (position fixed), only rotate
-    function lockTrayPosition() {
-      Body.setPosition(tray, { x: wrist.x, y: wrist.y - 110 });
-      Body.setVelocity(tray, { x: 0, y: 0 });
+      const tray = Body.create({
+        parts: [plank, lipL, lipR],
+        friction: 1.0,
+        frictionStatic: 1.2,
+        restitution: 0.02,
+        density: 0.0042,
+        label: "tray"
+      });
+      return tray;
     }
 
-    // ---- Control (drag => target angle) ----
-    let targetAngle = 0;
-    const MAX_ANGLE = 0.42;     // slightly less extreme to stay fair
-    const SENS = 2.0;
-    let dragging = false;
-    let lastX = 0;
+    const tray = makeTray(wrist.x, wrist.y - 110);
+    World.add(world, tray);
 
-    function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+    // A tiny static anchor at wrist position
+    const wristAnchor = Bodies.circle(wrist.x, wrist.y, 6, { isStatic:true, label:"wristAnchor" });
+    World.add(world, wristAnchor);
+
+    // Pivot constraint: keep tray attached to wrist point (pointB is on tray local coords)
+    const pivot = Constraint.create({
+      bodyA: wristAnchor,
+      pointA: { x: 0, y: 0 },
+      bodyB: tray,
+      pointB: { x: 0, y: 110 }, // attach under tray center (relative to tray COM)
+      stiffness: 1.0,
+      damping: 0.18,
+      length: 0
+    });
+    World.add(world, pivot);
+
+    // ---- Control (drag => target angle; apply torque without teleport) ----
+    let targetAngle = 0;
+    const MAX_ANGLE = 0.42;       // fair clamp
+    const SENS = 2.0;             // drag sensitivity
+    let dragging=false, lastX=0;
 
     function getPointerX(e) {
       const rect = canvas.getBoundingClientRect();
       const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
       return (clientX - rect.left) / rect.width;
     }
-    function onDown(e){ dragging=true; lastX=getPointerX(e); hintEl.style.opacity = 0; }
+
+    function onDown(e){ dragging=true; lastX=getPointerX(e); hintEl.style.opacity=0; }
     function onMove(e){
       if(!dragging) return;
       const x=getPointerX(e);
-      const dx=x-lastX;
-      lastX=x;
+      const dx=x-lastX; lastX=x;
       targetAngle = clamp(targetAngle + dx*SENS, -MAX_ANGLE, +MAX_ANGLE);
     }
     function onUp(){ dragging=false; }
@@ -184,99 +202,124 @@
     canvas.addEventListener('touchmove', onMove, { passive:true });
     canvas.addEventListener('touchend', onUp, { passive:true });
 
-    function controlTray(dt){
-      // PD (smooth wrist feel)
-      const kp=22.0, kd=6.0;
+    function applyControl(dt){
+      // PD torque: stable, no repositioning
+      const kp = 26.0, kd = 7.2;
       const err = targetAngle - tray.angle;
-      const dv = (kp*err - kd*tray.angularVelocity) * dt;
-      Body.setAngularVelocity(tray, tray.angularVelocity + dv);
+      const angAccel = (kp*err - kd*tray.angularVelocity);
 
-      // soft clamp
-      if (Math.abs(tray.angle) > MAX_ANGLE*1.10) {
+      // Convert desired angAccel into a pair of forces at tray ends (pure torque)
+      const torque = angAccel * 0.0026; // tuned constant
+      const forceMag = torque;
+
+      const L = 300; // half lever arm
+      const cos = Math.cos(tray.angle), sin = Math.sin(tray.angle);
+      const left  = { x: tray.position.x - L*cos, y: tray.position.y - L*sin };
+      const right = { x: tray.position.x + L*cos, y: tray.position.y + L*sin };
+
+      // Perpendicular direction
+      const px = -sin, py = cos;
+
+      Body.applyForce(tray, left,  { x:  px*forceMag, y:  py*forceMag });
+      Body.applyForce(tray, right, { x: -px*forceMag, y: -py*forceMag });
+
+      // soft clamp (prevents absurd angles)
+      if (Math.abs(tray.angle) > MAX_ANGLE*1.15) {
         Body.setAngle(tray, clamp(tray.angle, -MAX_ANGLE, +MAX_ANGLE));
-        Body.setAngularVelocity(tray, tray.angularVelocity * 0.25);
+        Body.setAngularVelocity(tray, tray.angularVelocity * 0.35);
       }
     }
 
-    // ---- Items + fake liquids ----
+    // ---- Iconic objects (compound bodies -> solver-friendly) ----
     const MAX_ITEMS = 10;
     let alive=true, score=0, t=0;
-    let nextSpawn=2.2;
-    let spawnEvery=2.2;   // slower
-    const droplets=[];
+    let spawnEvery=2.3, nextSpawn=2.3;
 
-    function addDroplet(x,y,vx,vy,color){
-      droplets.push({x,y,vx,vy,color,life:1.0});
-    }
+    const droplets=[]; // simple visual droplets, no physics
+    function addDroplet(x,y,vx,vy,color){ droplets.push({x,y,vx,vy,color,life:1.0}); }
 
     function countItems(){
       const bodies = Composite.allBodies(world);
       let n=0;
       for (const b of bodies) {
-        if (b.label==="tray" || b.isStatic) continue;
+        if (b.label==="tray" || b.isStatic || b.label==="wristAnchor") continue;
         n++;
       }
       return n;
     }
 
-    function spawn(kind){
-      // spawn across tray area, not only center
-      const x = WORLD_W * (0.25 + Math.random()*0.50);
-      const y = WORLD_H * 0.10;
+    function makeTumbler(x,y){
+      // iconic: trapezoid cup (compound of 2 rectangles to hint taper)
+      const base = Bodies.rectangle(x, y+10, 54, 22, { chamfer:{radius:6} });
+      const body = Bodies.rectangle(x, y-18, 66, 66, { chamfer:{radius:8} });
+      const cup = Body.create({
+        parts:[body, base],
+        friction: 0.95,
+        restitution: 0.02,
+        density: 0.0032,
+        label:"tumbler"
+      });
+      cup.plugin = { liquid: { fill:0.78, slosh:0, color:"#6bdcff" } };
+      return cup;
+    }
 
-      if (kind==="tumbler") {
-        const b = Bodies.rectangle(x, y, 64, 92, {
-          restitution: 0.02, friction: 0.95, density: 0.0032, label:"tumbler"
-        });
-        b.plugin = { liquid: { fill: 0.78, slosh: 0, color:"#6bdcff" } };
-        World.add(world, b);
-        return;
-      }
+    function makeBottle(x,y){
+      // iconic: body + neck + cap
+      const body = Bodies.rectangle(x, y+18, 56, 112, { chamfer:{radius:10} });
+      const neck = Bodies.rectangle(x, y-52, 30, 44, { chamfer:{radius:8} });
+      const cap  = Bodies.rectangle(x, y-80, 34, 16, { chamfer:{radius:6} });
+      const b = Body.create({
+        parts:[body, neck, cap],
+        friction: 0.7,
+        restitution: 0.02,
+        density: 0.0038,
+        label:"bottle"
+      });
+      return b;
+    }
 
-      if (kind==="bottle") {
-        // more iconic bottle (simple step shape) via vertices
-        const verts = [
-          {x:-25,y:-70},{x:25,y:-70},{x:25,y:40},{x:12,y:40},{x:12,y:70},
-          {x:-12,y:70},{x:-12,y:40},{x:-25,y:40}
-        ];
-        const b = Bodies.fromVertices(x, y, [verts], {
-          restitution: 0.02, friction: 0.7, density: 0.0038, label:"bottle"
-        }, true);
-        World.add(world, b);
-        return;
-      }
+    function makeWineGlass(x,y){
+      // iconic: bowl + stem + base (compound)
+      const bowl = Bodies.rectangle(x, y-34, 74, 64, { chamfer:{radius:14} });
+      const stem = Bodies.rectangle(x, y+18, 16, 54, { chamfer:{radius:6} });
+      const base = Bodies.rectangle(x, y+58, 72, 18, { chamfer:{radius:10} });
 
-      if (kind==="wine") {
-        const k = 1.35; // bigger goblet
-        const verts = [
-          {x:-10*k,y:-60*k},{x:10*k,y:-60*k},{x:26*k,y:-32*k},{x:18*k,y:0*k},
-          {x:10*k,y:8*k},{x:10*k,y:44*k},{x:18*k,y:52*k},{x:18*k,y:62*k},
-          {x:-18*k,y:62*k},{x:-18*k,y:52*k},{x:-10*k,y:44*k},{x:-10*k,y:8*k},
-          {x:-18*k,y:0*k},{x:-26*k,y:-32*k}
-        ];
-        const b = Bodies.fromVertices(x, y, [verts], {
-          restitution: 0.03, friction: 0.6, density: 0.0026, label:"wine"
-        }, true);
-        b.plugin = { liquid: { fill: 0.62, slosh: 0, color:"#ff7a59" } };
-        World.add(world, b);
-        return;
-      }
+      const g = Body.create({
+        parts:[bowl, stem, base],
+        friction: 0.62,
+        restitution: 0.03,
+        density: 0.0028,
+        label:"wine"
+      });
+      g.plugin = { liquid: { fill:0.62, slosh:0, color:"#ff7a59" } };
+      return g;
+    }
+
+    function spawn(){
+      // spread spawn across tray width
+      const x = WORLD_W * (0.24 + Math.random()*0.52);
+      const y = WORLD_H * 0.08;
+
+      const r = Math.random();
+      let body;
+      if (r < 0.45) body = makeTumbler(x,y);
+      else if (r < 0.78) body = makeWineGlass(x,y);
+      else body = makeBottle(x,y);
+
+      World.add(world, body);
     }
 
     function maybeSpawn(){
       if (!alive) return;
-      if (countItems() >= MAX_ITEMS) return;         // cap 10
+      if (countItems() >= MAX_ITEMS) return;
       if (t < nextSpawn) return;
 
-      // slow, gently ramps (never becomes ridiculous)
-      const difficulty = Math.min(1, t/90);
-      spawnEvery = Math.max(1.25, spawnEvery * (0.992 - 0.003*difficulty)); // slows less over time
+      // slower ramp: stays playable
+      const difficulty = Math.min(1, t/120);
+      spawnEvery = Math.max(1.35, spawnEvery * (0.994 - 0.002*difficulty));
       nextSpawn = t + spawnEvery;
 
-      const r = Math.random();
-      if (r < 0.45) spawn("tumbler");
-      else if (r < 0.78) spawn("wine");
-      else spawn("bottle");
+      spawn();
     }
 
     function updateLiquids(dt){
@@ -285,28 +328,29 @@
         if (!b.plugin || !b.plugin.liquid) continue;
         const liq = b.plugin.liquid;
 
-        const targetSlosh = clamp((-b.angularVelocity * 0.9) + (tray.angle * 0.7), -0.8, 0.8);
-        liq.slosh += (targetSlosh - liq.slosh) * (1 - Math.exp(-8 * dt));
+        // smoother slosh signal, less "crazy"
+        const targetSlosh = clamp((-b.angularVelocity*0.75) + (tray.angle*0.65), -0.75, 0.75);
+        liq.slosh += (targetSlosh - liq.slosh) * (1 - Math.exp(-7*dt));
 
-        const spillThresh = 0.55 - (liq.fill * 0.18);
+        const spillThresh = 0.52 - (liq.fill * 0.18);
         if (Math.abs(liq.slosh) > spillThresh && liq.fill > 0.08) {
-          const spillRate = (Math.abs(liq.slosh) - spillThresh) * 0.18;
+          const spillRate = (Math.abs(liq.slosh) - spillThresh) * 0.16;
           liq.fill = Math.max(0, liq.fill - spillRate * dt);
 
-          if (Math.random() < 0.22) {
-            const p = b.position;
-            addDroplet(p.x + (Math.random()*18-9), p.y - 55, (Math.random()*50-25), 50 + Math.random()*70, liq.color);
+          if (Math.random() < 0.18) {
+            addDroplet(b.position.x + (Math.random()*18-9), b.position.y - 65,
+                      (Math.random()*60-30), 60 + Math.random()*70, liq.color);
           }
         }
       }
 
       for (let i=droplets.length-1;i>=0;i--){
         const d = droplets[i];
-        d.vy += 240 * dt;
-        d.x += d.vx * dt;
-        d.y += d.vy * dt;
+        d.vy += 260*dt;
+        d.x += d.vx*dt;
+        d.y += d.vy*dt;
         d.life -= dt;
-        if (d.life <= 0 || d.y > WORLD_H + 120) droplets.splice(i,1);
+        if (d.life<=0 || d.y > WORLD_H+140) droplets.splice(i,1);
       }
     }
 
@@ -314,9 +358,9 @@
       if (!alive) return;
       const bodies = Composite.allBodies(world);
       for (const b of bodies) {
-        if (b.label==="tray" || b.isStatic) continue;
-        // out of play area => lose
-        if (b.position.y > WORLD_H*1.05 || b.position.x < -60 || b.position.x > WORLD_W + 60) {
+        if (b.label==="tray" || b.isStatic || b.label==="wristAnchor") continue;
+        // out of screen bounds => lose
+        if (b.position.y > WORLD_H*1.06 || b.position.x < -80 || b.position.x > WORLD_W + 80) {
           alive = false;
           setState("GAME OVER");
           return;
@@ -325,23 +369,30 @@
     }
 
     function reset(){
+      // remove all non-static except tray
       const bodies = Composite.allBodies(world);
       for (const b of bodies) {
-        if (b.label==="tray" || b.isStatic) continue;
+        if (b.isStatic) continue;
+        if (b.label==="tray") continue;
         World.remove(world, b);
       }
-      droplets.length = 0;
-
-      alive = true;
-      score = 0;
-      t = 0;
-      spawnEvery = 2.2;
-      nextSpawn = 2.2;
-      targetAngle = 0;
+      // re-add wristAnchor if removed (shouldn't be)
+      // reset tray state
+      Body.setPosition(tray, { x: wrist.x, y: wrist.y - 110 });
+      Body.setVelocity(tray, { x: 0, y: 0 });
       Body.setAngle(tray, 0);
       Body.setAngularVelocity(tray, 0);
+
+      alive=true;
+      score=0;
+      t=0;
+      spawnEvery=2.3;
+      nextSpawn=2.3;
+      targetAngle=0;
+      droplets.length=0;
+
+      hintEl.style.opacity=1;
       setState("OK");
-      hintEl.style.opacity = 1;
     }
     restartBtn.addEventListener('click', reset);
 
@@ -358,10 +409,9 @@
     }
 
     function drawBackground(){
+      const { s, ox, oy } = worldToScreen();
       ctx.save();
-      const {ox, oy, s} = worldToScreen(0,0);
       ctx.translate(ox, oy);
-
       ctx.fillStyle = "#121625";
       ctx.fillRect(0,0, WORLD_W*s, WORLD_H*s);
 
@@ -375,6 +425,39 @@
       ctx.restore();
     }
 
+    function drawArmAndHand(){
+      const { s, ox, oy } = worldToScreen();
+      ctx.save();
+      ctx.translate(ox, oy);
+      ctx.scale(s, s);
+
+      // arm
+      ctx.save();
+      ctx.translate(wrist.x, wrist.y + 250);
+      ctx.rotate(-0.15);
+      ctx.fillStyle = "#b28b68";
+      roundRect(ctx, -120, -40, 240, 580, 90);
+      ctx.fill();
+      ctx.restore();
+
+      // hand follows tray angle visually
+      ctx.save();
+      ctx.translate(wrist.x, wrist.y + 50);
+      ctx.rotate(tray.angle * 0.95);
+      ctx.fillStyle = "#caa07a";
+      roundRect(ctx, -175, -52, 350, 104, 52);
+      ctx.fill();
+
+      ctx.fillStyle = "#d3ac86";
+      for (let i=0;i<4;i++){
+        roundRect(ctx, -155 + i*78, -102, 62, 58, 22);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      ctx.restore();
+    }
+
     function pathVertices(verts){
       ctx.beginPath();
       ctx.moveTo(verts[0].x, verts[0].y);
@@ -382,20 +465,10 @@
       ctx.closePath();
     }
 
-    function drawLiquidInBody(b, ox, oy, s){
+    function drawLiquid(b){
       const liq = b.plugin.liquid;
-
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.scale(s, s);
-
-      const verts = b.vertices;
-      pathVertices(verts);
-      ctx.clip();
-
       const bounds = b.bounds;
       const h = (bounds.max.y - bounds.min.y);
-
       const levelY = bounds.max.y - h * liq.fill;
       const tilt = liq.slosh;
       const cx = (bounds.min.x + bounds.max.x) * 0.5;
@@ -406,10 +479,10 @@
       ctx.fillStyle = liq.color;
       ctx.globalAlpha = 0.9;
       ctx.beginPath();
-      ctx.moveTo(bounds.min.x - 120, bounds.max.y + 120);
-      ctx.lineTo(bounds.max.x + 120, bounds.max.y + 120);
-      ctx.lineTo(bounds.max.x + 120, y2);
-      ctx.lineTo(bounds.min.x - 120, y1);
+      ctx.moveTo(bounds.min.x - 140, bounds.max.y + 140);
+      ctx.lineTo(bounds.max.x + 140, bounds.max.y + 140);
+      ctx.lineTo(bounds.max.x + 140, y2);
+      ctx.lineTo(bounds.min.x - 140, y1);
       ctx.closePath();
       ctx.fill();
 
@@ -417,22 +490,23 @@
       ctx.strokeStyle = "rgba(255,255,255,.65)";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(bounds.min.x - 60, y1);
-      ctx.lineTo(bounds.max.x + 60, y2);
+      ctx.moveTo(bounds.min.x - 70, y1);
+      ctx.lineTo(bounds.max.x + 70, y2);
       ctx.stroke();
-
       ctx.globalAlpha = 1;
-      ctx.restore();
     }
 
-    function drawBody(b){
-      const {ox, oy, s} = worldToScreen(0,0);
-
+    function drawBodies(){
+      const { s, ox, oy } = worldToScreen();
       ctx.save();
       ctx.translate(ox, oy);
       ctx.scale(s, s);
 
-      if (b.label === "tray") {
+      const bodies = Composite.allBodies(world);
+
+      // tray first
+      for (const b of bodies) {
+        if (b.label !== "tray") continue;
         ctx.save();
         ctx.translate(b.position.x, b.position.y);
         ctx.rotate(b.angle);
@@ -453,80 +527,45 @@
         ctx.stroke();
 
         ctx.restore();
-        ctx.restore();
-        return;
       }
 
-      let fill = "#d8e2ff";
-      if (b.label==="tumbler") fill = "#cfd8ff";
-      if (b.label==="wine") fill = "#d8e2ff";
-      if (b.label==="bottle") fill = "#7de0b8";
+      // items
+      for (const b of bodies) {
+        if (b.label==="tray" || b.isStatic || b.label==="wristAnchor") continue;
 
-      ctx.fillStyle = fill;
-      ctx.strokeStyle = "rgba(255,255,255,.18)";
-      ctx.lineWidth = 2;
+        let fill = "#d8e2ff";
+        if (b.label==="tumbler") fill = "#cfd8ff";
+        if (b.label==="wine") fill = "#d8e2ff";
+        if (b.label==="bottle") fill = "#7de0b8";
 
-      pathVertices(b.vertices);
-      ctx.fill();
-      ctx.stroke();
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = "rgba(255,255,255,.18)";
+        ctx.lineWidth = 2;
 
-      if (b.plugin && b.plugin.liquid) drawLiquidInBody(b, ox, oy, s);
+        // clip & draw liquid first (inside shape)
+        if (b.plugin && b.plugin.liquid) {
+          pathVertices(b.vertices);
+          ctx.save();
+          ctx.clip();
+          drawLiquid(b);
+          ctx.restore();
+        }
 
-      ctx.restore();
-    }
-
-    function drawArmAndHand(){
-      const {ox, oy, s} = worldToScreen(0,0);
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.scale(s, s);
-
-      // arm
-      ctx.save();
-      ctx.translate(wrist.x, wrist.y + 240);
-      ctx.rotate(-0.15);
-      ctx.fillStyle = "#b28b68";
-      roundRect(ctx, -120, -40, 240, 560, 90);
-      ctx.fill();
-      ctx.restore();
-
-      // hand (visual follows tray angle)
-      ctx.save();
-      const a = tray.angle * 0.95;
-      ctx.translate(wrist.x, wrist.y + 45);
-      ctx.rotate(a);
-      ctx.fillStyle = "#caa07a";
-      roundRect(ctx, -170, -50, 340, 100, 50);
-      ctx.fill();
-
-      ctx.fillStyle = "#d3ac86";
-      for (let i=0;i<4;i++){
-        roundRect(ctx, -150 + i*75, -98, 60, 56, 22);
+        pathVertices(b.vertices);
         ctx.fill();
+        ctx.stroke();
       }
-      ctx.restore();
 
-      ctx.fillStyle = "rgba(255,255,255,.16)";
-      ctx.beginPath();
-      ctx.arc(wrist.x, wrist.y, 10, 0, Math.PI*2);
-      ctx.fill();
-
-      ctx.restore();
-    }
-
-    function drawDroplets(){
-      const {ox, oy, s} = worldToScreen(0,0);
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.scale(s, s);
+      // droplets
       for (const d of droplets) {
         ctx.globalAlpha = Math.max(0, Math.min(1, d.life));
         ctx.fillStyle = d.color;
         ctx.beginPath();
-        ctx.arc(d.x, d.y, 4.2, 0, Math.PI*2);
+        ctx.arc(d.x, d.y, 4.3, 0, Math.PI*2);
         ctx.fill();
       }
       ctx.globalAlpha = 1;
+
       ctx.restore();
     }
 
@@ -542,23 +581,14 @@
         score += dt * (2 + 0.22 * countItems());
       }
 
-      controlTray(dt);
+      applyControl(dt);
       Engine.update(engine, dt * 1000);
-      lockTrayPosition();
       updateLiquids(dt);
       checkLose();
 
       drawBackground();
       drawArmAndHand();
-
-      // draw tray then items
-      const bodies = Composite.allBodies(world);
-      for (const b of bodies) if (b.label==="tray") drawBody(b);
-      for (const b of bodies) {
-        if (b.label==="tray" || b.isStatic) continue;
-        drawBody(b);
-      }
-      drawDroplets();
+      drawBodies();
 
       scoreEl.textContent = `Score: ${Math.floor(score)}`;
       itemsEl.textContent = `Items: ${countItems()}/${MAX_ITEMS}`;
