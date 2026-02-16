@@ -1,205 +1,421 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Bar Bahlance v83 debug</title>
-  <style>
-    :root{--bg:#0f1115;--panel:rgba(20,24,36,.92);--stroke:rgba(255,255,255,.12);--text:#e8e8e8;}
-    html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
-    #stage{position:fixed;inset:0;display:grid;place-items:center;overflow:hidden;}
-    canvas{display:block;touch-action:none;user-select:none;-webkit-user-select:none;border-radius:18px;background:#121625;}
-    #hud{position:fixed;left:10px;right:10px;top:10px;display:flex;justify-content:space-between;gap:10px;z-index:5;pointer-events:none;}
-    .pill{background:var(--panel);border:1px solid var(--stroke);border-radius:999px;padding:8px 12px;font-size:13px;backdrop-filter:blur(8px);display:flex;gap:10px;align-items:center;white-space:nowrap;}
-    #debug{
-      position:fixed;left:10px;right:10px;bottom:10px;z-index:9999;
-      background:rgba(0,0,0,.65);border:1px solid rgba(255,255,255,.15);border-radius:12px;
-      padding:10px;font-size:12px;line-height:1.35;white-space:pre-wrap;max-height:34vh;overflow:auto;
-      pointer-events:none; /* IMPORTANT: non blocca i tocchi */
-    }
-    #debug b{color:#fff}
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Bar Bahlance</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vh; /* Mantiene aspect ratio basato sull'altezza */
+            max-width: 100%;
+            aspect-ratio: 2/3;
+            background-color: #4a3b59; /* Colore sfondo bar */
+            overflow: hidden;
+            border: 4px solid #000;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Schermate UI (Start, Game Over, HUD) */
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            z-index: 10;
+        }
+
+        #start-screen {
+            background: url('./assets/title_screen.jpg') no-repeat center center;
+            background-size: cover;
+            pointer-events: auto; /* Cliccabile */
+            cursor: pointer;
+        }
+
+        .blink-text {
+            margin-top: 60%; /* Sposta la scritta in basso */
+            color: #fff;
+            text-shadow: 4px 4px 0 #000;
+            font-size: 20px;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        #hud {
+            justify-content: flex-start;
+            padding-top: 20px;
+            color: white;
+            text-shadow: 2px 2px 0 #000;
+            font-size: 14px;
+        }
+
+        #countdown {
+            font-size: 40px;
+            color: yellow;
+            display: none;
+        }
+
+        #game-over-screen {
+            background: rgba(0, 0, 0, 0.85);
+            display: none;
+            pointer-events: auto;
+        }
+
+        .btn {
+            background: #ffcc00;
+            border: 4px solid #fff;
+            padding: 15px 30px;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        
+        .btn:hover { background: #ff9900; }
+
+    </style>
 </head>
 <body>
-  <div id="stage"><canvas id="c"></canvas></div>
 
-  <div id="hud">
-    <div class="pill"><span>v83</span><span style="opacity:.6">•</span><span id="status">boot</span></div>
-    <div class="pill"><span id="counts">bodies: -</span></div>
-  </div>
+<div id="game-container">
+    <div id="start-screen" class="ui-layer" onclick="startGame()">
+        <div class="blink-text">TAP TO START</div>
+    </div>
 
-  <div id="debug"><b>DEBUG</b>\n</div>
+    <div id="hud" class="ui-layer">
+        <div id="level-display">LEVEL 1</div>
+        <div id="items-display">Items: 0/3</div>
+        <div id="countdown"></div>
+    </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
-  <script>
-  (() => {
-    const dbg = document.getElementById('debug');
-    const statusEl = document.getElementById('status');
-    const countsEl = document.getElementById('counts');
-    const log = (m)=>{ dbg.textContent += m + "\n"; };
+    <div id="game-over-screen" class="ui-layer">
+        <h1 style="color: red; text-shadow: 3px 3px 0 #000;">CRASH!</h1>
+        <p>You dropped a drink!</p>
+        <button class="btn" onclick="resetGame()">RETRY</button>
+    </div>
+</div>
 
-    window.addEventListener('error', (e)=>log("JS ERROR: " + (e.message || e.error || "unknown")));
-    window.addEventListener('unhandledrejection', (e)=>log("REJECTION: " + (e.reason?.message || e.reason)));
+<script>
+    // --- CONFIGURAZIONE ---
+    const Engine = Matter.Engine,
+          Render = Matter.Render,
+          Runner = Matter.Runner,
+          Bodies = Matter.Bodies,
+          Composite = Matter.Composite,
+          Events = Matter.Events,
+          Body = Matter.Body,
+          Vector = Matter.Vector;
 
-    log("Matter loaded? " + (!!window.Matter));
-    if(!window.Matter){ statusEl.textContent="Matter FAIL"; return; }
+    // Livelli: numero di oggetti per livello
+    const LEVELS = [3, 5, 7, 10, 12];
+    
+    // Variabili di Stato
+    let engine, render, runner;
+    let tray, hand;
+    let items = [];
+    let currentLevelIdx = 0;
+    let itemsToSpawn = 0;
+    let spawnedCount = 0;
+    let isGameOver = false;
+    let isCountdownActive = false;
+    let countdownTimer = null;
+    let spawnInterval = null;
+    
+    // Dimensioni logiche (canvas)
+    const width = 600;
+    const height = 900;
 
-    const { Engine, World, Bodies, Body, Composite } = Matter;
+    // --- SETUP INIZIALE ---
+    function init() {
+        // Crea Engine
+        engine = Engine.create();
+        
+        // Crea Renderer
+        const container = document.getElementById('game-container');
+        // Rimuovi canvas precedenti se esistono
+        const oldCanvas = container.querySelector('canvas');
+        if(oldCanvas) oldCanvas.remove();
 
-    // Canvas fit 2:3
-    const canvas = document.getElementById('c');
-    const ctx = canvas.getContext('2d');
+        render = Render.create({
+            element: container,
+            engine: engine,
+            options: {
+                width: width,
+                height: height,
+                wireframes: false, // Metti a true per vedere le hitbox
+                background: 'transparent'
+            }
+        });
 
-    const WORLD_W=900, WORLD_H=1350;
-    let cw=0,ch=0,dpr=1;
+        // Crea Runner
+        runner = Runner.create();
+        
+        // Setup Input (Mouse/Touch)
+        render.canvas.addEventListener('mousemove', handleInput);
+        render.canvas.addEventListener('touchmove', handleInput, {passive: false});
 
-    function resize(){
-      const w = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
-      const h = Math.min(window.innerHeight, document.documentElement.clientHeight || window.innerHeight);
-      dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-      const targetH = Math.min(h, w*(3/2));
-      const targetW = targetH*(2/3);
-      cw = Math.floor(targetW); ch = Math.floor(targetH);
-      canvas.style.width = cw+"px"; canvas.style.height = ch+"px";
-      canvas.width = Math.floor(cw*dpr); canvas.height = Math.floor(ch*dpr);
-      ctx.setTransform(dpr,0,0,dpr,0,0);
-      log(`resize: css=${cw}x${ch} dpr=${dpr} backing=${canvas.width}x${canvas.height}`);
-    }
-    window.addEventListener('resize', resize, {passive:true});
-    resize();
-
-    function worldToScreen(){
-      const s = Math.min(cw/WORLD_W, ch/WORLD_H);
-      const ox = (cw - WORLD_W*s)/2;
-      const oy = (ch - WORLD_H*s)/2;
-      return {s,ox,oy};
-    }
-    function w2s(x,y){
-      const {s,ox,oy}=worldToScreen();
-      return {x:ox + x*s, y:oy + y*s, s};
-    }
-
-    // Physics
-    const engine = Engine.create({ enableSleeping:true });
-    engine.gravity.y = 1.0;
-    engine.positionIterations = 12;
-    engine.velocityIterations = 10;
-
-    const world = engine.world;
-
-    World.add(world, [
-      Bodies.rectangle(-110, WORLD_H/2, 220, WORLD_H+1000, {isStatic:true}),
-      Bodies.rectangle(WORLD_W+110, WORLD_H/2, 220, WORLD_H+1000, {isStatic:true}),
-      Bodies.rectangle(WORLD_W/2, WORLD_H+90, WORLD_W+1200, 180, {isStatic:true}),
-    ]);
-
-    const wrist = { x: WORLD_W*0.5, y: WORLD_H*0.68 };
-    const trayHome = { x: wrist.x, y: wrist.y - 115 };
-
-    const tray = Bodies.rectangle(trayHome.x, trayHome.y, 640, 36, {
-      chamfer:{radius:14}, friction:1.2, label:"tray"
-    });
-    // Stabilizza: niente rotazioni “strane” dovute all’inerzia
-    tray.inertia = Infinity;
-    World.add(world, tray);
-
-    // Input drag (su window per essere sicuri che i touch arrivino)
-    let targetAngle=0, dragging=false, lastX=0;
-    function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-
-    function getNormXFromClientX(clientX){
-      const rect = canvas.getBoundingClientRect();
-      return (clientX - rect.left) / rect.width;
+        // Loop personalizzato per disegnare la "Mano" e controllare il gioco
+        Events.on(render, 'afterRender', function() {
+            drawHand();
+            checkLoseCondition();
+        });
     }
 
-    function startDrag(clientX){
-      dragging = true;
-      lastX = getNormXFromClientX(clientX);
-    }
-    function moveDrag(clientX){
-      if(!dragging) return;
-      const x = getNormXFromClientX(clientX);
-      const dx = x - lastX;
-      lastX = x;
-      targetAngle = clamp(targetAngle + dx*2.8, -0.62, +0.62);
-    }
-    function endDrag(){ dragging=false; }
+    // --- CREAZIONE MONDO DI GIOCO ---
+    function setupLevel() {
+        Composite.clear(engine.world);
+        Engine.clear(engine);
+        items = [];
+        isGameOver = false;
+        isCountdownActive = false;
+        
+        // Aggiorna UI
+        document.getElementById('level-display').innerText = `LEVEL ${currentLevelIdx + 1}`;
+        document.getElementById('items-display').innerText = `Next: ${LEVELS[currentLevelIdx]}`;
+        document.getElementById('countdown').style.display = 'none';
+        
+        // Crea il vassoio (Tray)
+        // Posizionato al centro in basso
+        tray = Bodies.rectangle(width / 2, height - 200, 350, 20, { 
+            isStatic: true, // Lo muoviamo manualmente, ma è "statico" per la fisica
+            chamfer: { radius: 5 },
+            render: { fillStyle: '#C0C0C0' },
+            friction: 0.8 // Alta frizione per non far scivolare subito
+        });
 
-    window.addEventListener('pointerdown', (e)=>startDrag(e.clientX), {passive:true});
-    window.addEventListener('pointermove', (e)=>moveDrag(e.clientX), {passive:true});
-    window.addEventListener('pointerup', endDrag, {passive:true});
-    window.addEventListener('pointercancel', endDrag, {passive:true});
+        Composite.add(engine.world, tray);
 
-    window.addEventListener('touchstart', (e)=>startDrag(e.touches[0].clientX), {passive:true});
-    window.addEventListener('touchmove', (e)=>moveDrag(e.touches[0].clientX), {passive:true});
-    window.addEventListener('touchend', endDrag, {passive:true});
+        // Avvia il render e il runner
+        Render.run(render);
+        Runner.run(runner, engine);
 
-    // Loop
-    let last=performance.now(), ticks=0;
-    statusEl.textContent = "running";
-
-    function drawBG(){
-      const {s,ox,oy}=worldToScreen();
-      ctx.save();
-      ctx.translate(ox,oy);
-      ctx.fillStyle="#121625";
-      ctx.fillRect(0,0, WORLD_W*s, WORLD_H*s);
-      ctx.restore();
-    }
-
-    function drawMarkers(){
-      // wrist cross
-      const p = w2s(wrist.x, wrist.y);
-      ctx.save();
-      ctx.strokeStyle="#ff4444";
-      ctx.lineWidth=2;
-      ctx.beginPath();
-      ctx.moveTo(p.x-10, p.y); ctx.lineTo(p.x+10, p.y);
-      ctx.moveTo(p.x, p.y-10); ctx.lineTo(p.x, p.y+10);
-      ctx.stroke();
-      ctx.restore();
-
-      // tray marker
-      const {s,ox,oy}=worldToScreen();
-      ctx.save();
-      ctx.translate(ox,oy);
-      ctx.scale(s,s);
-      ctx.translate(tray.position.x, tray.position.y);
-      ctx.rotate(tray.angle);
-      ctx.strokeStyle="#ffd45c";
-      ctx.lineWidth=4;
-      ctx.strokeRect(-320, -18, 640, 36);
-      ctx.restore();
+        // Avvia lo spawn degli oggetti
+        itemsToSpawn = LEVELS[currentLevelIdx];
+        spawnedCount = 0;
+        
+        startSpawning();
     }
 
-    function tick(now){
-      const dt = Math.min(0.033, (now-last)/1000);
-      last=now; ticks++;
+    // --- CONTROLLI ---
+    function handleInput(e) {
+        if (isGameOver) return;
+        e.preventDefault();
 
-      // KINEMATIC tray: posizione fissa + angolo imposto (NO sballa)
-      const follow = 1 - Math.exp(-18*dt);
-      const newAngle = tray.angle + (targetAngle - tray.angle)*follow;
+        let clientX;
+        if(e.type === 'touchmove') {
+            clientX = e.touches[0].clientX;
+        } else {
+            clientX = e.clientX;
+        }
 
-      Body.setPosition(tray, trayHome);
-      Body.setVelocity(tray, {x:0,y:0});
-      Body.setAngle(tray, newAngle);
-      Body.setAngularVelocity(tray, 0);
+        // Calcola la posizione relativa al canvas
+        const rect = render.canvas.getBoundingClientRect();
+        const scaleX = width / rect.width;
+        const x = (clientX - rect.left) * scaleX;
 
-      Engine.update(engine, dt*1000);
+        // Mappa la X del mouse all'angolo (-140 a 140 gradi sono TROPPI per giocare bene, 
+        // ho limitato a +/- 45 gradi per giocabilità, ma il codice supporta 140 se cambi i numeri)
+        // 140 gradi = 2.44 radianti. È quasi capovolto. 
+        // Imposto un massimo di 60 gradi (1.04 rad) per evitare frustrazione, come richiesto.
+        
+        const maxAngle = 60 * (Math.PI / 180); 
+        const normalizedX = (x - width / 2) / (width / 2); // da -1 a 1
+        let targetAngle = normalizedX * maxAngle;
 
-      drawBG();
-      drawMarkers();
+        // Smooth movement (Lerp) per evitare scatti bruschi che lanciano via tutto
+        const currentAngle = tray.angle;
+        const smoothFactor = 0.1; // Più basso = più ritardo/peso
+        const newAngle = currentAngle + (targetAngle - currentAngle) * smoothFactor;
 
-      countsEl.textContent = "bodies: " + Composite.allBodies(world).length;
-
-      if(ticks % 30 === 0){
-        log(`tick=${ticks} target=${targetAngle.toFixed(3)} angle=${tray.angle.toFixed(3)} dragging=${dragging}`);
-      }
-
-      requestAnimationFrame(tick);
+        Body.setAngle(tray, newAngle);
     }
-    requestAnimationFrame(tick);
-  })();
-  </script>
+
+    // --- DISEGNO DELLA MANO ---
+    function drawHand() {
+        const ctx = render.context;
+        const trayPos = tray.position;
+        
+        ctx.beginPath();
+        ctx.moveTo(width / 2, height); // Base della mano (fondo schermo)
+        // Punto di attacco al vassoio (che ruota)
+        ctx.lineTo(trayPos.x, trayPos.y); 
+        
+        ctx.lineWidth = 40;
+        ctx.strokeStyle = '#e0ac69'; // Colore pelle
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        
+        // Polsino camicia
+        ctx.beginPath();
+        ctx.moveTo(width / 2, height);
+        ctx.lineTo(width/2, height - 100);
+        ctx.lineWidth = 45;
+        ctx.strokeStyle = '#fff';
+        ctx.stroke();
+    }
+
+    // --- SPAWN OGGETTI ---
+    function startSpawning() {
+        let spawnDelay = 2000; // Tempo tra oggetti
+        
+        spawnInterval = setInterval(() => {
+            if (isGameOver) {
+                clearInterval(spawnInterval);
+                return;
+            }
+            if (spawnedCount >= itemsToSpawn) {
+                clearInterval(spawnInterval);
+                checkWinCondition(); // Inizia monitoraggio vittoria
+                return;
+            }
+
+            spawnItem();
+            spawnedCount++;
+            document.getElementById('items-display').innerText = `Items: ${spawnedCount}/${itemsToSpawn}`;
+            
+        }, spawnDelay);
+    }
+
+    function spawnItem() {
+        // Tipi di oggetti con proprietà fisiche diverse
+        const types = [
+            // Boccale Birra (Stabile, pesante)
+            { w: 50, h: 70, color: '#f28e1c', shape: 'rect', density: 0.002 },
+            // Bottiglia (Alta, stretta, instabile)
+            { w: 25, h: 90, color: '#2e8b57', shape: 'rect', density: 0.0015 },
+            // Calice Vino (Triangolo rovesciato, molto instabile)
+            { w: 40, h: 50, color: '#900020', shape: 'polygon', sides: 3, density: 0.001 },
+            // Shot (Piccolo, leggero)
+            { w: 20, h: 25, color: '#ADD8E6', shape: 'rect', density: 0.001 },
+            // Drink (Quadrato standard)
+            { w: 40, h: 50, color: '#ff69b4', shape: 'rect', density: 0.0015 }
+        ];
+
+        const type = types[Math.floor(Math.random() * types.length)];
+        const startX = (width / 2) + (Math.random() * 40 - 20); // Leggera variazione casuale X
+
+        let item;
+        if (type.shape === 'rect') {
+            item = Bodies.rectangle(startX, -50, type.w, type.h, {
+                render: { fillStyle: type.color, strokeStyle: 'black', lineWidth: 2 },
+                density: type.density,
+                friction: 0.5,
+                restitution: 0.1 // Poco rimbalzo
+            });
+        } else if (type.shape === 'polygon') {
+            item = Bodies.polygon(startX, -50, type.sides, type.w / 2, {
+                render: { fillStyle: type.color, strokeStyle: 'black', lineWidth: 2 },
+                density: type.density,
+                friction: 0.5,
+                restitution: 0.1,
+                angle: Math.PI // Ruota triangolo per farlo sembrare un calice (punta giù)
+            });
+        }
+
+        items.push(item);
+        Composite.add(engine.world, item);
+    }
+
+    // --- CONDIZIONI VITTORIA/SCONFITTA ---
+    function checkLoseCondition() {
+        if (isGameOver) return;
+
+        items.forEach(item => {
+            // Se un oggetto scende sotto il fondo del canvas
+            if (item.position.y > height + 50) {
+                gameOver();
+            }
+        });
+    }
+
+    function checkWinCondition() {
+        // Aspetta che tutti siano atterrati (approssimativamente)
+        // Avvia countdown
+        isCountdownActive = true;
+        let timeLeft = 8;
+        const countEl = document.getElementById('countdown');
+        countEl.style.display = 'block';
+        countEl.innerText = timeLeft;
+
+        countdownTimer = setInterval(() => {
+            if (isGameOver) {
+                clearInterval(countdownTimer);
+                return;
+            }
+            timeLeft--;
+            countEl.innerText = timeLeft;
+
+            if (timeLeft <= 0) {
+                clearInterval(countdownTimer);
+                levelComplete();
+            }
+        }, 1000);
+    }
+
+    function levelComplete() {
+        if (currentLevelIdx < LEVELS.length - 1) {
+            currentLevelIdx++;
+            alert("LEVEL COMPLETE! Get ready for Level " + (currentLevelIdx + 1));
+            setupLevel(); // Reset pulito per nuovo livello
+        } else {
+            alert("YOU ARE THE BAR BALANCE MASTER! Game Over (Win)");
+            currentLevelIdx = 0;
+            document.getElementById('start-screen').style.display = 'flex';
+        }
+    }
+
+    function gameOver() {
+        isGameOver = true;
+        clearInterval(spawnInterval);
+        clearInterval(countdownTimer);
+        document.getElementById('game-over-screen').style.display = 'flex';
+    }
+
+    // --- GESTIONE INTERFACCIA ---
+    function startGame() {
+        document.getElementById('start-screen').style.display = 'none';
+        init();
+        setupLevel();
+    }
+
+    function resetGame() {
+        document.getElementById('game-over-screen').style.display = 'none';
+        currentLevelIdx = 0; // Reset al livello 1 come richiesto
+        setupLevel();
+    }
+
+</script>
 </body>
 </html>
