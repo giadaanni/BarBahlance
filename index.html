@@ -52,12 +52,12 @@
             z-index: 10;
         }
 
-        /* MODIFICA: Percorso aggiornato a ASSET e nome file PNG */
         #start-screen {
             background: url('./ASSET/BarBahlance_mainScreen.png') no-repeat center center;
             background-size: cover;
             pointer-events: auto;
             cursor: pointer;
+            z-index: 20; /* Sopra a tutto */
         }
 
         .blink-text {
@@ -73,7 +73,9 @@
             50% { opacity: 0; }
         }
 
+        /* HUD nascosto di default */
         #hud {
+            display: none; 
             justify-content: flex-start;
             padding-top: 20px;
             color: white;
@@ -91,6 +93,7 @@
             background: rgba(0, 0, 0, 0.85);
             display: none;
             pointer-events: auto;
+            z-index: 30;
         }
 
         .btn {
@@ -102,9 +105,6 @@
             cursor: pointer;
             margin-top: 20px;
         }
-        
-        .btn:hover { background: #ff9900; }
-
     </style>
 </head>
 <body>
@@ -122,7 +122,7 @@
 
     <div id="game-over-screen" class="ui-layer">
         <h1 style="color: red; text-shadow: 3px 3px 0 #000;">CRASH!</h1>
-        <p>You dropped a drink!</p>
+        <p style="color: white;">You dropped a drink!</p>
         <button class="btn" onclick="resetGame()">RETRY</button>
     </div>
 </div>
@@ -137,22 +137,19 @@
           Body = Matter.Body;
 
     const LEVELS = [3, 5, 7, 10, 12];
-    
-    let engine, render, runner;
-    let tray;
+    let engine, render, runner, tray;
     let items = [];
-    let currentLevelIdx = 0;
-    let itemsToSpawn = 0;
-    let spawnedCount = 0;
-    let isGameOver = false;
-    let countdownTimer = null;
-    let spawnInterval = null;
+    let currentLevelIdx = 0, itemsToSpawn = 0, spawnedCount = 0;
+    let isGameOver = false, countdownTimer = null, spawnInterval = null;
     
-    const width = 600;
-    const height = 900;
+    const width = 600, height = 900;
 
     function init() {
         engine = Engine.create();
+        // Stabilizzazione fisica per evitare tremolii
+        engine.positionIterations = 10;
+        engine.velocityIterations = 10;
+
         const container = document.getElementById('game-container');
         const oldCanvas = container.querySelector('canvas');
         if(oldCanvas) oldCanvas.remove();
@@ -160,16 +157,10 @@
         render = Render.create({
             element: container,
             engine: engine,
-            options: {
-                width: width,
-                height: height,
-                wireframes: false, 
-                background: 'transparent'
-            }
+            options: { width: width, height: height, wireframes: false, background: 'transparent' }
         });
 
         runner = Runner.create();
-        
         render.canvas.addEventListener('mousemove', handleInput);
         render.canvas.addEventListener('touchmove', handleInput, {passive: false});
 
@@ -185,20 +176,19 @@
         items = [];
         isGameOver = false;
         
+        document.getElementById('hud').style.display = 'flex';
         document.getElementById('level-display').innerText = `LEVEL ${currentLevelIdx + 1}`;
         document.getElementById('items-display').innerText = `Next: ${LEVELS[currentLevelIdx]}`;
         document.getElementById('countdown').style.display = 'none';
         
         tray = Bodies.rectangle(width / 2, height - 200, 350, 20, { 
             isStatic: true, 
-            chamfer: { radius: 5 },
             render: { fillStyle: '#C0C0C0' },
-            friction: 0.1, 
-            frictionStatic: 0.1
+            friction: 0.15,
+            slop: 0.5 // Aiuta a ridurre le micro-collisioni
         });
 
         Composite.add(engine.world, tray);
-
         Render.run(render);
         Runner.run(runner, engine);
 
@@ -220,9 +210,8 @@
         let targetAngle = Math.max(Math.min(normalizedX * maxAngle, maxAngle), -maxAngle);
 
         const currentAngle = tray.angle;
-        const smoothFactor = 0.1; 
-        const newAngle = currentAngle + (targetAngle - currentAngle) * smoothFactor;
-        Body.setAngle(tray, newAngle);
+        const smoothFactor = 0.12; 
+        Body.setAngle(tray, currentAngle + (targetAngle - currentAngle) * smoothFactor);
     }
 
     function drawHand() {
@@ -234,13 +223,6 @@
         ctx.lineWidth = 40;
         ctx.strokeStyle = '#e0ac69'; 
         ctx.lineCap = 'round';
-        ctx.stroke();
-        
-        ctx.beginPath();
-        ctx.moveTo(width / 2, height);
-        ctx.lineTo(width/2, height - 100);
-        ctx.lineWidth = 45;
-        ctx.strokeStyle = '#fff';
         ctx.stroke();
     }
 
@@ -255,37 +237,44 @@
             spawnItem();
             spawnedCount++;
             document.getElementById('items-display').innerText = `Items: ${spawnedCount}/${itemsToSpawn}`;
-        }, 2000);
+        }, 2200);
     }
 
     function spawnItem() {
-        const startX = (width / 2) + (Math.random() * 300 - 150); 
+        const startX = (width / 2) + (Math.random() * 320 - 160); 
         const itemType = Math.floor(Math.random() * 5);
         let item;
-        const commonProps = { friction: 0.09, frictionStatic: 0.09, restitution: 0.2, render: { strokeStyle: '#000', lineWidth: 2 } };
+        const commonProps = { 
+            friction: 0.15, 
+            frictionAir: 0.01, // Attrito dell'aria per stabilizzare la caduta
+            restitution: 0.05, // Quasi nessun rimbalzo per evitare tremolii
+            render: { strokeStyle: '#000', lineWidth: 2 } 
+        };
 
         switch(itemType) {
-            case 0: // Boccale
+            case 0: // Boccale iconico
                 const mugBody = Bodies.rectangle(startX, -50, 50, 70, { render: { fillStyle: '#f28e1c' } });
-                const mugHandle = Bodies.rectangle(startX + 30, -50, 15, 40, { render: { fillStyle: '#f28e1c' } });
+                const mugHandle = Bodies.rectangle(startX + 30, -50, 12, 35, { render: { fillStyle: '#e5e5e5' } });
                 item = Body.create({ parts: [mugBody, mugHandle], density: 0.005, ...commonProps });
                 break;
-            case 1: // Bottiglia
-                const botNeck = Bodies.rectangle(startX, -90, 15, 40, { render: { fillStyle: '#2e8b57' } });
-                const botBody = Bodies.rectangle(startX, -50, 30, 60, { render: { fillStyle: '#2e8b57' } });
-                item = Body.create({ parts: [botNeck, botBody], density: 0.004, ...commonProps });
+            case 1: // Bottiglia rifinita
+                const botNeck = Bodies.rectangle(startX, -95, 12, 35, { render: { fillStyle: '#1e5d3c' } });
+                const botBody = Bodies.rectangle(startX, -55, 35, 65, { render: { fillStyle: '#2e8b57' } });
+                item = Body.create({ parts: [botNeck, botBody], density: 0.0045, ...commonProps });
                 break;
-            case 2: // Calice
-                const cup = Bodies.polygon(startX, -70, 3, 25, { angle: Math.PI, render: { fillStyle: '#900020' } });
-                const stem = Bodies.rectangle(startX, -45, 5, 25, { render: { fillStyle: '#fff' } });
-                const base = Bodies.rectangle(startX, -30, 25, 5, { render: { fillStyle: '#fff' } });
-                item = Body.create({ parts: [cup, stem, base], density: 0.003, ...commonProps });
+            case 2: // Calice (Corretto: Coppa trapezoidale + stelo + base)
+                const cup = Bodies.trapezoid(startX, -85, 50, 40, 0.5, { render: { fillStyle: '#900020' } });
+                const stem = Bodies.rectangle(startX, -55, 6, 30, { render: { fillStyle: '#eee' } });
+                const base = Bodies.rectangle(startX, -40, 35, 6, { render: { fillStyle: '#eee' } });
+                item = Body.create({ parts: [cup, stem, base], density: 0.0035, ...commonProps });
                 break;
             case 3: // Shot
-                item = Bodies.rectangle(startX, -50, 25, 30, { render: { fillStyle: '#ADD8E6' }, density: 0.004, ...commonProps });
+                item = Bodies.rectangle(startX, -50, 25, 35, { render: { fillStyle: '#ADD8E6' }, density: 0.004, ...commonProps });
                 break;
-            case 4: // Drink
-                item = Bodies.rectangle(startX, -50, 45, 50, { render: { fillStyle: '#ff69b4' }, density: 0.004, ...commonProps });
+            case 4: // Drink Largo
+                const glass = Bodies.rectangle(startX, -50, 50, 60, { render: { fillStyle: '#ff69b4' } });
+                const liquid = Bodies.rectangle(startX, -55, 40, 40, { render: { fillStyle: '#ff1493' } });
+                item = Body.create({ parts: [glass, liquid], density: 0.004, ...commonProps });
                 break;
         }
         items.push(item);
@@ -294,7 +283,7 @@
 
     function checkLoseCondition() {
         if (isGameOver) return;
-        items.forEach(item => { if (item.position.y > height + 50) gameOver(); });
+        items.forEach(item => { if (item.position.y > height + 60) gameOver(); });
     }
 
     function checkWinCondition() {
@@ -313,12 +302,11 @@
     function levelComplete() {
         if (currentLevelIdx < LEVELS.length - 1) {
             currentLevelIdx++;
-            alert("LEVEL COMPLETE! Next: Level " + (currentLevelIdx + 1));
+            alert("LEVEL COMPLETE!");
             setupLevel(); 
         } else {
-            alert("WINNER!");
-            currentLevelIdx = 0;
-            document.getElementById('start-screen').style.display = 'flex';
+            alert("BAR MASTER!");
+            resetGame();
         }
     }
 
@@ -337,8 +325,9 @@
 
     function resetGame() {
         document.getElementById('game-over-screen').style.display = 'none';
-        currentLevelIdx = 0; 
-        setupLevel();
+        document.getElementById('start-screen').style.display = 'flex';
+        document.getElementById('hud').style.display = 'none';
+        currentLevelIdx = 0;
     }
 </script>
 </body>
