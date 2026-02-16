@@ -3,50 +3,18 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Bar Bahlance - Fixed</title>
+    <title>Bar Bahlance - Pro Edition</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
-
-        body {
-            margin: 0; padding: 0; background-color: #1a1a1a;
-            overflow: hidden; font-family: 'Press Start 2P', cursive;
-            touch-action: none; user-select: none;
-        }
-
-        #game-container {
-            position: relative; width: 100%; height: 100vh;
-            max-width: 500px; margin: 0 auto;
-            background: linear-gradient(to bottom, #1e272e, #000);
-            border: 4px solid #333;
-        }
-
-        .hud { position: absolute; width: 100%; pointer-events: none; z-index: 20; text-align: center; color: #fff; text-shadow: 2px 2px #000; }
+        body { margin: 0; padding: 0; background: #111; overflow: hidden; font-family: 'Press Start 2P', cursive; touch-action: none; user-select: none; }
+        #game-container { position: relative; width: 100%; height: 100vh; max-width: 500px; margin: 0 auto; background: #1a1a1a; border: 4px solid #333; }
+        .hud { position: absolute; width: 100%; pointer-events: none; z-index: 100; color: #fff; text-align: center; text-shadow: 2px 2px #000; }
         #top-hud { top: 20px; display: flex; justify-content: space-between; padding: 0 20px; box-sizing: border-box; font-size: 10px; }
-        
-        #center-msg { 
-            top: 50%; left: 50%; transform: translate(-50%, -50%); 
-            width: 100%; display: flex; flex-direction: column; align-items: center;
-            pointer-events: none;
-        }
-        
-        h1 { color: #ff0055; font-size: 26px; margin-bottom: 20px; text-align: center; line-height: 1.4; }
-        
-        .btn {
-            background: #00f2ff; color: #000; padding: 20px 30px;
-            font-family: 'Press Start 2P', cursive; font-size: 16px;
-            border: 4px solid #fff; cursor: pointer; pointer-events: auto;
-        }
-
-        #countdown-overlay { color: #ffea00; font-size: 22px; }
+        #center-msg { top: 40%; left: 50%; transform: translate(-50%, -50%); width: 100%; display: flex; flex-direction: column; align-items: center; }
+        h1 { color: #FFD700; font-size: 24px; margin-bottom: 20px; }
+        .btn { background: #FFD700; color: #000; padding: 15px 30px; font-family: 'Press Start 2P', cursive; border: 4px solid #fff; cursor: pointer; pointer-events: auto; }
+        #countdown { color: #ff4444; font-size: 20px; margin-top: 20px; }
         .hidden { display: none !important; }
-        
-        #balance-indicator {
-            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
-            width: 120px; height: 10px; background: #333; border: 2px solid #555;
-        }
-        #balance-dot {
-            position: absolute; top: 0; left: 55px; width: 10px; height: 10px; background: #ff0055;
-        }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
 </head>
@@ -54,24 +22,24 @@
 
 <div id="game-container">
     <div id="top-hud" class="hud">
-        <div>LVL:<span id="level-val">1</span></div>
-        <div>ITEMS:<span id="items-val">0/3</span></div>
+        <div>LVL:<span id="lvl">1</span></div>
+        <div>OBJ:<span id="obj">0/3</span></div>
     </div>
-
     <div id="center-msg" class="hud">
-        <h1 id="main-title">BAR<br>BAHLANCE</h1>
-        <button id="action-btn" class="btn">START</button>
-        <div id="countdown-overlay" class="hidden">HOLD IT! <span id="timer-val">8</span></div>
+        <h1 id="title">BAR BAHLANCE</h1>
+        <button id="start-btn" class="btn">START</button>
+        <div id="countdown" class="hidden">RESISTI: <span id="timer">8</span></div>
     </div>
-
-    <div id="balance-indicator"><div id="balance-dot"></div></div>
 </div>
 
 <script>
-    const { Engine, Render, Runner, Bodies, Composite, Constraint, Body, Events } = Matter;
+    const { Engine, Render, Runner, Bodies, Body, Composite, Constraint, Events } = Matter;
 
     const engine = Engine.create();
-    const world = engine.world;
+    // Aumentiamo la precisione per evitare che gli oggetti passino attraverso il vassoio
+    engine.positionIterations = 10;
+    engine.velocityIterations = 10;
+
     const container = document.getElementById('game-container');
     const width = container.clientWidth;
     const height = container.clientHeight;
@@ -82,167 +50,143 @@
         options: { width, height, wireframes: false, background: 'transparent' }
     });
 
-    let tray, handPivot;
-    let currentLevel = 1;
-    let itemsSpawned = 0;
-    let gameStatus = "MENU";
-    let gameObjects = [];
-    let spawnInterval, surviveTimer;
+    let tray, pivot, items = [], status = "MENU", level = 1, spawned = 0, spawnTimer, winTimer;
 
-    // --- LOGICA FISICA ---
-
-    function createTray() {
-        // Vassoio molto leggero per sentire i pesi (density bassa)
-        tray = Bodies.rectangle(width/2, height - 200, 250, 12, {
-            friction: 0.9, restitution: 0.1, density: 0.0005,
-            render: { fillStyle: '#d35400' }
-        });
-
-        // Perno centrale - Abbastanza elastico da essere un incubo
-        handPivot = Constraint.create({
-            pointA: { x: width/2, y: height - 160 },
-            bodyB: tray,
-            pointB: { x: 0, y: 0 },
-            stiffness: 0.15,
-            damping: 0.05,
-            length: 5,
-            render: { strokeStyle: '#f3e5ab', lineWidth: 4 }
-        });
-
-        Composite.add(world, [tray, handPivot]);
-    }
-
-    function spawnItem() {
-        if (gameStatus !== "PLAYING") return;
-
-        itemsSpawned++;
-        const totalItems = 2 + currentLevel;
-        document.getElementById('items-val').innerText = `${itemsSpawned}/${totalItems}`;
-
-        // SPAWN AMPIO: Cadono ovunque per sbilanciare
-        const spawnX = (width / 2) + (Math.random() * 200 - 100);
+    // --- FABBRICA DEGLI OGGETTI (Forme Complesse) ---
+    function createItem(x) {
         const type = Math.random();
-        let body;
+        let compoundBody;
 
-        if (type < 0.4) {
-            // BOCCALE (Pesantissimo)
-            body = Bodies.rectangle(spawnX, -50, 35, 45, {
-                density: 0.02, friction: 1, render: { fillStyle: '#f1c40f' }
+        if (type < 0.33) {
+            // BOTTIGLIA (Corpo + Collo)
+            const base = Bodies.rectangle(x, -50, 25, 60);
+            const neck = Bodies.rectangle(x, -95, 10, 30);
+            compoundBody = Body.create({
+                parts: [base, neck],
+                friction: 0.5, density: 0.01,
+                render: { fillStyle: '#2ecc71' }
             });
-        } else if (type < 0.7) {
-            // BOTTIGLIA (Alta, sposta il baricentro)
-            body = Bodies.rectangle(spawnX, -50, 18, 65, {
-                density: 0.015, friction: 0.8, render: { fillStyle: '#2ecc71' }
+        } else if (type < 0.66) {
+            // CALICE (Base + Stelo + Coppa)
+            const b = Bodies.rectangle(x, -30, 30, 5);
+            const s = Bodies.rectangle(x, -45, 5, 25);
+            const c = Bodies.trapezoid(x, -70, 35, 30, 0.7, { angle: Math.PI });
+            compoundBody = Body.create({
+                parts: [b, s, c],
+                friction: 0.3, density: 0.005,
+                render: { fillStyle: '#e74c3c' }
             });
         } else {
-            // CALICE (Sottile e instabile)
-            body = Bodies.rectangle(spawnX, -50, 25, 30, {
-                density: 0.008, friction: 0.5, render: { fillStyle: '#e74c3c' }
+            // BOCCALE (Rettangolo solido e pesante)
+            compoundBody = Bodies.rectangle(x, -50, 45, 55, {
+                friction: 0.8, density: 0.02,
+                render: { fillStyle: '#f1c40f', strokeStyle: '#fff', lineWidth: 2 }
             });
         }
         
-        // Rotazione casuale iniziale per complicare le cose
-        Body.setAngle(body, (Math.random() - 0.5) * 0.5);
-
-        gameObjects.push(body);
-        Composite.add(world, body);
-
-        if (itemsSpawned >= totalItems) {
-            clearInterval(spawnInterval);
-            startCountdown();
-        }
+        items.push(compoundBody);
+        Composite.add(engine.world, compoundBody);
     }
 
-    // --- GESTIONE FLUSSO ---
+    function createTray() {
+        // Vassoio con spessore maggiore per evitare compenetrazioni
+        tray = Bodies.rectangle(width/2, height - 200, 280, 20, {
+            friction: 1, restitution: 0.1, density: 0.01,
+            render: { fillStyle: '#8B4513' }
+        });
 
-    function cleanWorld() {
-        if (spawnInterval) clearInterval(spawnInterval);
-        if (surviveTimer) clearInterval(surviveTimer);
-        gameObjects.forEach(obj => Composite.remove(world, obj));
-        gameObjects = [];
-        if (tray) Composite.remove(world, tray);
-        if (handPivot) Composite.remove(world, handPivot);
+        pivot = Constraint.create({
+            pointA: { x: width/2, y: height - 180 },
+            bodyB: tray,
+            stiffness: 0.2, damping: 0.1, length: 0,
+            render: { visible: true, strokeStyle: '#555', lineWidth: 2 }
+        });
+
+        Composite.add(engine.world, [tray, pivot]);
     }
 
+    // --- LOGICA DI GIOCO ---
     function initLevel() {
-        cleanWorld();
-        itemsSpawned = 0;
-        const totalItems = 2 + currentLevel;
-        document.getElementById('items-val').innerText = `0/${totalItems}`;
-        document.getElementById('level-val').innerText = currentLevel;
+        Composite.clear(engine.world);
+        items = []; spawned = 0;
+        document.getElementById('lvl').innerText = level;
+        document.getElementById('obj').innerText = `0/${2+level}`;
+        document.getElementById('center-msg').classList.add('hidden');
         
         createTray();
-        gameStatus = "PLAYING";
-        
-        document.getElementById('center-msg').classList.add('hidden');
-        document.getElementById('countdown-overlay').classList.add('hidden');
+        status = "PLAYING";
 
-        const rate = Math.max(700, 2000 - (currentLevel * 150));
-        spawnInterval = setInterval(spawnItem, rate);
+        spawnTimer = setInterval(() => {
+            if (spawned < 2 + level) {
+                createItem(width/2 + (Math.random() * 220 - 110));
+                spawned++;
+                document.getElementById('obj').innerText = `${spawned}/${2+level}`;
+            } else {
+                clearInterval(spawnTimer);
+                startWinCount();
+            }
+        }, 2000);
     }
 
-    function startCountdown() {
-        gameStatus = "SURVIVING";
-        const overlay = document.getElementById('countdown-overlay');
-        overlay.classList.remove('hidden');
+    function startWinCount() {
+        status = "WINNING";
+        const msg = document.getElementById('countdown');
+        msg.classList.remove('hidden');
         let time = 8;
-        document.getElementById('timer-val').innerText = time;
-        
-        surviveTimer = setInterval(() => {
+        document.getElementById('timer').innerText = time;
+
+        winTimer = setInterval(() => {
             time--;
-            document.getElementById('timer-val').innerText = time;
+            document.getElementById('timer').innerText = time;
             if (time <= 0) {
-                clearInterval(surviveTimer);
-                currentLevel++;
+                clearInterval(winTimer);
+                level++;
                 initLevel();
             }
         }, 1000);
     }
 
     function gameOver() {
-        if (gameStatus === "GAMEOVER") return;
-        gameStatus = "GAMEOVER";
-        clearInterval(spawnInterval);
-        clearInterval(surviveTimer);
-
-        document.getElementById('main-title').innerText = "WASTED!";
-        document.getElementById('action-btn').innerText = "RETRY";
+        status = "GAMEOVER";
+        clearInterval(spawnTimer);
+        clearInterval(winTimer);
+        document.getElementById('title').innerText = "VETRO ROTTO!";
+        document.getElementById('start-btn').innerText = "RIPROVA";
         document.getElementById('center-msg').classList.remove('hidden');
-        currentLevel = 1;
+        document.getElementById('countdown').classList.add('hidden');
+        level = 1;
     }
 
-    // --- INPUT ---
-    let inputX = width / 2;
-    const moveHandler = (x) => { inputX = x; };
-    window.addEventListener('mousemove', (e) => moveHandler(e.clientX));
-    window.addEventListener('touchmove', (e) => moveHandler(e.touches[0].clientX));
+    // --- CONTROLLI E VINCOLI ---
+    let mouseX = width / 2;
+    window.addEventListener('mousemove', (e) => mouseX = e.clientX);
+    window.addEventListener('touchmove', (e) => mouseX = e.touches[0].clientX);
 
     Events.on(engine, 'beforeUpdate', () => {
-        if (gameStatus !== "PLAYING" && gameStatus !== "SURVIVING") return;
+        if (status !== "PLAYING" && status !== "WINNING") return;
 
-        if (tray) {
-            // CONTROLLO: Il vassoio cerca di inclinarsi dove metti il dito
-            const targetAngle = (inputX - width/2) / (width/2) * 1.2;
-            const angleDiff = targetAngle - tray.angle;
-            Body.setAngularVelocity(tray, angleDiff * 0.08);
+        // 1. Movimento basato su mouse/touch
+        const torque = (mouseX - width/2) / (width/2) * 0.15;
+        Body.setAngularVelocity(tray, tray.angularVelocity + torque);
 
-            // Update UI
-            const dot = document.getElementById('balance-dot');
-            dot.style.left = (55 + (tray.angle * 60)) + "px";
-
-            // Se il vassoio ruota troppo (ribaltamento estremo)
-            if (Math.abs(tray.angle) > 1.5) gameOver();
+        // 2. IL BLOCCO A 40 GRADI (Limitatore rotazione)
+        const limit = 0.7; // Circa 40 gradi in radianti
+        if (tray.angle > limit) {
+            Body.setAngle(tray, limit);
+            Body.setAngularVelocity(tray, 0);
+        }
+        if (tray.angle < -limit) {
+            Body.setAngle(tray, -limit);
+            Body.setAngularVelocity(tray, 0);
         }
 
-        gameObjects.forEach(obj => {
-            if (obj.position.y > height) gameOver();
+        // 3. Controllo caduta oggetti
+        items.forEach(item => {
+            if (item.position.y > height) gameOver();
         });
     });
 
-    document.getElementById('action-btn').addEventListener('click', (e) => {
-        e.stopPropagation();
-        initLevel();
-    });
+    document.getElementById('start-btn').addEventListener('click', () => initLevel());
 
     Render.run(render);
     Runner.run(Runner.create(), engine);
