@@ -10,14 +10,24 @@
         body { margin: 0; background-color: #222; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Press Start 2P', cursive; }
         #game-container { position: relative; width: 100vh; max-width: 100%; aspect-ratio: 2/3; background-color: #3d2e4d; border: 4px solid #000; }
         canvas { display: block; width: 100%; height: 100%; }
-        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
-        #start-screen { background: url('./ASSET/BarBahlance_mainScreen.png') no-repeat center center; background-size: cover; pointer-events: auto; cursor: pointer; z-index: 20; }
-        .blink-text { margin-top: 60%; color: #fff; text-shadow: 4px 4px 0 #000; animation: blink 1s infinite; }
+        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; z-index: 10; }
+        
+        /* Start Screen con immagine corretta */
+        #start-screen { 
+            background: url('./ASSET/BarBahlance_mainScreen.png') no-repeat center center; 
+            background-size: cover; 
+            pointer-events: auto; 
+            cursor: pointer; 
+            z-index: 20; 
+        }
+
+        .blink-text { margin-top: 60%; color: #fff; text-shadow: 4px 4px 0 #000; font-size: 18px; animation: blink 1s infinite; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-        #hud { display: none; justify-content: flex-start; padding-top: 20px; color: white; font-size: 14px; }
+        
+        #hud { display: none; justify-content: flex-start; padding-top: 20px; color: white; text-shadow: 2px 2px 0 #000; font-size: 14px; }
         #countdown { font-size: 40px; color: yellow; display: none; margin-top: 20px; }
         #game-over-screen { background: rgba(0, 0, 0, 0.85); display: none; pointer-events: auto; z-index: 30; }
-        .btn { background: #ffcc00; border: 4px solid #fff; padding: 15px 30px; font-family: 'Press Start 2P', cursive; cursor: pointer; }
+        .btn { background: #ffcc00; border: 4px solid #fff; padding: 15px 30px; font-family: 'Press Start 2P', cursive; cursor: pointer; margin-top: 20px; }
     </style>
 </head>
 <body>
@@ -32,7 +42,7 @@
         <div id="countdown">8</div>
     </div>
     <div id="game-over-screen" class="ui-layer">
-        <h1 style="color: red;">CRASH!</h1>
+        <h1 style="color: red; text-shadow: 3px 3px 0 #000;">CRASH!</h1>
         <button class="btn" onclick="resetGame()">RETRY</button>
     </div>
 </div>
@@ -41,14 +51,14 @@
     const { Engine, Render, Runner, Bodies, Composite, Events, Body, Constraint } = Matter;
 
     const LEVELS = [3, 5, 7, 10, 12];
-    let engine, render, runner, tray, mouseConstraint;
+    let engine, render, runner, tray;
     let items = [], currentLevelIdx = 0, spawnedCount = 0, isGameOver = false;
     const width = 600, height = 900;
     let targetX = width / 2;
 
     function init() {
         engine = Engine.create();
-        engine.constraintIterations = 5; // Più precisione per il perno
+        engine.constraintIterations = 10; 
 
         const container = document.getElementById('game-container');
         render = Render.create({
@@ -78,13 +88,15 @@
         document.getElementById('countdown').style.display = 'none';
         document.getElementById('level-display').innerText = `LEVEL ${currentLevelIdx + 1}`;
         
-        // VASSOIO: Leggero per reagire ai pesi (+15% dimensione)
+        // Vassoio fisico bilanciato (+15%)
         tray = Bodies.rectangle(width / 2, height - 250, 410, 25, { 
-            density: 0.002, friction: 0.4, restitution: 0.1,
+            density: 0.005, 
+            friction: 0.4, 
+            restitution: 0.1,
+            frictionAir: 0.06, 
             render: { fillStyle: '#bdc3c7' }
         });
 
-        // Perno fisico
         const pivot = Constraint.create({
             pointA: { x: width / 2, y: height - 250 },
             bodyB: tray,
@@ -101,56 +113,64 @@
 
     function updateTrayControl() {
         if (isGameOver || !tray) return;
-        // Calcoliamo l'inclinazione desiderata basata sul mouse
-        const mouseAngle = (targetX - width / 2) / (width / 2) * 1.3;
-        // Applichiamo una forza di bilanciamento: più sei lontano dall'angolo del mouse, più forza ricevi
-        const torque = (mouseAngle - tray.angle) * 0.2;
-        Body.setAngularVelocity(tray, tray.angularVelocity + torque);
 
-        // Limite fisico 140 gradi (circa 2.4 rad totali, 1.2 per lato)
-        if (Math.abs(tray.angle) > 1.2) {
-            Body.setAngle(tray, 1.2 * Math.sign(tray.angle));
-            Body.setAngularVelocity(tray, 0);
-        }
+        // Calcolo inclinazione desiderata basata sul mouse
+        const mouseAngle = (targetX - width / 2) / (width / 2) * 1.3;
+        const angleError = mouseAngle - tray.angle;
+
+        // Torque di controbilanciamento con smorzamento per evitare rotazioni 360
+        const torque = angleError * 0.12; 
+        const damping = tray.angularVelocity * 0.2;
+        
+        Body.setAngularVelocity(tray, (tray.angularVelocity + torque) - damping);
+
+        // Limiti rigidi di sicurezza
+        const maxAV = 0.15;
+        if (tray.angularVelocity > maxAV) Body.setAngularVelocity(tray, maxAV);
+        if (tray.angularVelocity < -maxAV) Body.setAngularVelocity(tray, -maxAV);
+
+        const limit = 1.2;
+        if (tray.angle > limit) { Body.setAngle(tray, limit); Body.setAngularVelocity(tray, 0); }
+        if (tray.angle < -limit) { Body.setAngle(tray, -limit); Body.setAngularVelocity(tray, 0); }
     }
 
     function spawnItem() {
         const startX = (width / 2) + (Math.random() * 340 - 170); 
         const type = Math.floor(Math.random() * 6);
         let item;
-        const props = { friction: 0.3, restitution: 0.05, density: 0.01 }; // Densità alta per pesare molto
+        const props = { friction: 0.35, restitution: 0.05, density: 0.012 }; 
 
         switch(type) {
-            case 0: // Calice Vino (Alto e instabile)
+            case 0: // Calice Vino
                 item = Body.create({ parts: [
                     Bodies.trapezoid(startX, -100, 58, 52, 0.5, { render: { fillStyle: '#900020' }}),
                     Bodies.rectangle(startX, -65, 8, 40, { render: { fillStyle: '#fff' }}),
                     Bodies.rectangle(startX, -45, 45, 8, { render: { fillStyle: '#fff' }})
                 ], ...props });
                 break;
-            case 1: // Boccale Birra (Molto pesante)
+            case 1: // Boccale Birra
                 item = Body.create({ parts: [
                     Bodies.rectangle(startX, -50, 65, 85, { chamfer: 5, render: { fillStyle: '#f28e1c' }}),
                     Bodies.rectangle(startX + 35, -50, 18, 50, { chamfer: 10, render: { fillStyle: '#eee' }})
-                ], ...props, density: 0.015 });
+                ], ...props, density: 0.018 });
                 break;
-            case 2: // Gin Lemon (Bicchiere largo)
+            case 2: // Gin Lemon
                 item = Bodies.rectangle(startX, -50, 58, 75, { ...props, render: { fillStyle: '#ffff00' }});
                 break;
-            case 3: // Bottiglietta Acqua (Leggera ma alta)
+            case 3: // Bottiglietta Acqua
                 item = Body.create({ parts: [
                     Bodies.rectangle(startX, -50, 35, 80, { render: { fillStyle: '#3498db' }}),
                     Bodies.rectangle(startX, -95, 20, 20, { render: { fillStyle: '#2980b9' }})
-                ], ...props, density: 0.008 });
+                ], ...props });
                 break;
-            case 4: // Bottiglia Birra (Alta e pesante)
+            case 4: // Bottiglia Birra
                 item = Body.create({ parts: [
-                    Bodies.rectangle(startX, -50, 40, 95, { render: { fillStyle: '#3d2b1f' }}),
-                    Bodies.rectangle(startX, -110, 15, 45, { render: { fillStyle: '#3d2b1f' }})
-                ], ...props, density: 0.012 });
+                    Bodies.rectangle(startX, -50, 42, 100, { render: { fillStyle: '#3d2b1f' }}),
+                    Bodies.rectangle(startX, -115, 15, 45, { render: { fillStyle: '#3d2b1f' }})
+                ], ...props, density: 0.015 });
                 break;
-            case 5: // Chupito (Piccolo ma instabile se si muove veloce)
-                item = Bodies.rectangle(startX, -50, 30, 45, { ...props, render: { fillStyle: '#e74c3c' }});
+            case 5: // Chupito
+                item = Bodies.rectangle(startX, -50, 32, 48, { ...props, density: 0.02, render: { fillStyle: '#e74c3c' }});
                 break;
         }
         items.push(item);
@@ -162,7 +182,7 @@
         ctx.beginPath();
         ctx.moveTo(width / 2, height); 
         ctx.lineTo(tray.position.x, tray.position.y); 
-        ctx.lineWidth = 50; ctx.strokeStyle = '#e0ac69'; ctx.lineCap = 'round'; ctx.stroke();
+        ctx.lineWidth = 55; ctx.strokeStyle = '#e0ac69'; ctx.lineCap = 'round'; ctx.stroke();
     }
 
     function startSpawning() {
@@ -190,7 +210,7 @@
                 clearInterval(timer); 
                 if(currentLevelIdx < LEVELS.length - 1) {
                     currentLevelIdx++; setupLevel(); 
-                } else { alert("BAR MASTER!"); resetGame(); }
+                } else { alert("SEI UN MASTER DEL BAR!"); resetGame(); }
             }
         }, 1000);
     }
@@ -200,9 +220,20 @@
         items.forEach(item => { if (item.position.y > height + 100) gameOver(); });
     }
 
-    function gameOver() { isGameOver = true; document.getElementById('game-over-screen').style.display = 'flex'; }
+    function gameOver() { 
+        isGameOver = true; 
+        clearInterval(spawnInterval);
+        document.getElementById('game-over-screen').style.display = 'flex'; 
+    }
+
     function startGame() { document.getElementById('start-screen').style.display = 'none'; init(); setupLevel(); }
-    function resetGame() { document.getElementById('game-over-screen').style.display = 'none'; document.getElementById('start-screen').style.display = 'flex'; currentLevelIdx = 0; }
+    
+    function resetGame() { 
+        document.getElementById('game-over-screen').style.display = 'none'; 
+        document.getElementById('start-screen').style.display = 'flex'; 
+        document.getElementById('hud').style.display = 'none';
+        currentLevelIdx = 0; 
+    }
 </script>
 </body>
 </html>
