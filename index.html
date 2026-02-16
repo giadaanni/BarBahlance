@@ -10,7 +10,7 @@
         body { margin: 0; background-color: #222; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Press Start 2P', cursive; }
         #game-container { position: relative; width: 100vh; max-width: 100%; aspect-ratio: 2/3; background-color: #3d2e4d; border: 4px solid #000; }
         canvas { display: block; width: 100%; height: 100%; }
-        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; z-index: 10; }
+        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         #start-screen { background: url('./ASSET/BarBahlance_mainScreen.png') no-repeat center center; background-size: cover; pointer-events: auto; cursor: pointer; z-index: 20; }
         .blink-text { margin-top: 65%; color: #fff; text-shadow: 4px 4px 0 #000; animation: blink 1s infinite; font-size: 18px; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
@@ -38,13 +38,14 @@
 </div>
 
 <script>
-    const { Engine, Render, Runner, Bodies, Composite, Events, Body, Constraint } = Matter;
+    const { Engine, Render, Runner, Bodies, Composite, Events, Body } = Matter;
 
-    let engine, render, runner, tray, pivot;
+    let engine, render, runner, tray;
     let items = [], currentLevelIdx = 0, spawnedCount = 0, isGameOver = false;
     const width = 600, height = 900;
     const LEVELS = [3, 5, 8, 12, 15];
-    let targetX = width / 2;
+    let targetAngle = 0;
+    let currentX = width / 2;
 
     function init() {
         engine = Engine.create();
@@ -61,18 +62,29 @@
         const updateInput = (e) => {
             const rect = render.canvas.getBoundingClientRect();
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            targetX = (clientX - rect.left) * (width / rect.width);
+            currentX = (clientX - rect.left) * (width / rect.width);
+            // Calcola l'angolo desiderato (max 45 gradi)
+            targetAngle = ((currentX - width/2) / (width/2)) * 0.8;
         };
 
         window.addEventListener('mousemove', updateInput);
         window.addEventListener('touchmove', updateInput, {passive: false});
 
+        Events.on(engine, 'beforeUpdate', () => {
+            if (isGameOver || !tray) return;
+            
+            // Movimento fluido verso l'angolo del mouse
+            let angleDiff = targetAngle - tray.angle;
+            Body.setAngularVelocity(tray, angleDiff * 0.15);
+            
+            // Mantieni il vassoio in posizione centrale ma libero di ruotare
+            Body.setPosition(tray, { x: width/2, y: height - 250 });
+        });
+
         Events.on(render, 'afterRender', () => {
             if (isGameOver) return;
             drawHand();
             checkLoseCondition();
-            // Il pivot segue il mouse in modo fluido
-            if (pivot) pivot.pointA.x = targetX;
         });
     }
 
@@ -82,22 +94,14 @@
         document.getElementById('hud').style.display = 'flex';
         document.getElementById('countdown').style.display = 'none';
         
-        // VASSOIO: Corpo fisico reattivo
-        tray = Bodies.rectangle(width / 2, height - 300, 420, 25, { 
-            density: 0.01, friction: 0.5, restitution: 0.1,
+        tray = Bodies.rectangle(width/2, height - 250, 420, 30, { 
+            friction: 0.8, 
+            density: 0.1, // Molto pesante per non volare via
+            restitution: 0.1,
             render: { fillStyle: '#bdc3c7' }
         });
 
-        // Perno che collega il mondo al vassoio nel punto centrale
-        pivot = Constraint.create({
-            pointA: { x: width / 2, y: height - 300 },
-            bodyB: tray,
-            stiffness: 1, 
-            length: 0,
-            render: { visible: false }
-        });
-
-        Composite.add(engine.world, [tray, pivot]);
+        Composite.add(engine.world, tray);
         Render.run(render);
         Runner.run(runner, engine);
         spawnedCount = 0;
@@ -108,7 +112,7 @@
         const startX = (width / 2) + (Math.random() * 300 - 150);
         const type = Math.floor(Math.random() * 6);
         let item;
-        const props = { friction: 0.4, restitution: 0.1, density: 0.02 };
+        const props = { friction: 0.7, restitution: 0.05, density: 0.005 };
 
         switch(type) {
             case 0: // Calice
@@ -122,7 +126,7 @@
                 item = Body.create({ parts: [
                     Bodies.rectangle(startX, -50, 80, 100, { render: { fillStyle: '#f28e1c' }}),
                     Bodies.rectangle(startX + 40, -50, 20, 50, { render: { fillStyle: '#eee' }})
-                ], ...props, density: 0.03 });
+                ], ...props });
                 break;
             case 2: // Gin Lemon
                 item = Bodies.rectangle(startX, -50, 65, 85, { ...props, render: { fillStyle: '#ffff00' }});
@@ -134,10 +138,10 @@
                 item = Body.create({ parts: [
                     Bodies.rectangle(startX, -50, 50, 120, { render: { fillStyle: '#3d2b1f' }}),
                     Bodies.rectangle(startX, -125, 20, 50, { render: { fillStyle: '#3d2b1f' }})
-                ], ...props, density: 0.025 });
+                ], ...props });
                 break;
             case 5: // Chupito
-                item = Bodies.rectangle(startX, -50, 40, 55, { ...props, density: 0.04, render: { fillStyle: '#e74c3c' }});
+                item = Bodies.rectangle(startX, -50, 40, 55, { ...props, render: { fillStyle: '#e74c3c' }});
                 break;
         }
         items.push(item);
@@ -147,8 +151,8 @@
     function drawHand() {
         const ctx = render.context;
         ctx.beginPath();
-        ctx.moveTo(targetX, height); 
-        ctx.lineTo(tray.position.x, tray.position.y); 
+        ctx.moveTo(currentX, height); 
+        ctx.lineTo(width/2, height - 250); 
         ctx.lineWidth = 50; ctx.strokeStyle = '#e0ac69'; ctx.lineCap = 'round'; ctx.stroke();
     }
 
@@ -168,16 +172,22 @@
         let sec = 8;
         const el = document.getElementById('countdown');
         el.style.display = 'block';
+        el.innerText = sec;
         let timer = setInterval(() => {
             if (isGameOver) { clearInterval(timer); return; }
-            el.innerText = --sec;
-            if (sec <= 0) { clearInterval(timer); currentLevelIdx++; setupLevel(); }
+            sec--;
+            el.innerText = sec;
+            if (sec <= 0) { 
+                clearInterval(timer); 
+                currentLevelIdx++; 
+                if (currentLevelIdx < LEVELS.length) setupLevel();
+                else alert("BAR MASTER!");
+            }
         }, 1000);
     }
 
     function checkLoseCondition() {
         items.forEach(item => { if (item.position.y > height + 100) gameOver(); });
-        if (tray.position.y > height + 200 || Math.abs(tray.angle) > 1.5) gameOver();
     }
 
     function gameOver() { isGameOver = true; document.getElementById('game-over-screen').style.display = 'flex'; }
