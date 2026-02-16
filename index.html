@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Bar Bahlance v81 debug</title>
+  <title>Bar Bahlance v82 debug</title>
   <style>
     :root{--bg:#0f1115;--panel:rgba(20,24,36,.92);--stroke:rgba(255,255,255,.12);--text:#e8e8e8;--muted:#aeb6c7;}
     html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
@@ -23,7 +23,7 @@
   <div id="stage"><canvas id="c"></canvas></div>
 
   <div id="hud">
-    <div class="pill"><span>v81</span><span style="opacity:.6">•</span><span id="status">boot</span></div>
+    <div class="pill"><span>v82</span><span style="opacity:.6">•</span><span id="status">boot</span></div>
     <div class="pill"><span id="counts">bodies: -</span></div>
   </div>
 
@@ -93,7 +93,6 @@
 
     const world = engine.world;
 
-    // walls + floor
     World.add(world, [
       Bodies.rectangle(-110, WORLD_H/2, 220, WORLD_H+1000, {isStatic:true}),
       Bodies.rectangle(WORLD_W+110, WORLD_H/2, 220, WORLD_H+1000, {isStatic:true}),
@@ -115,7 +114,7 @@
     });
     World.add(world, pivot);
 
-    // simple drag control
+    // drag control
     let targetAngle=0, dragging=false, lastX=0;
     function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
     function getNormX(e){
@@ -152,7 +151,7 @@
     }
 
     function drawMarkers(){
-      // wrist cross (red)
+      // wrist cross
       const p = w2s(wrist.x, wrist.y);
       ctx.save();
       ctx.strokeStyle="#ff4444";
@@ -163,7 +162,7 @@
       ctx.stroke();
       ctx.restore();
 
-      // tray rect marker (yellow, based on body position/angle)
+      // tray marker
       const {s,ox,oy}=worldToScreen();
       ctx.save();
       ctx.translate(ox,oy);
@@ -179,21 +178,26 @@
     function tick(now){
       const dt = Math.min(0.033, (now-last)/1000); last=now; ticks++;
 
-      // PD-ish torque
-      const Kp=0.030, Kd=0.020;
-      const torque = (targetAngle - tray.angle)*Kp - tray.angularVelocity*Kd;
-      Body.applyTorque(tray, torque);
+      // Instead of Body.applyTorque (not present): setAngularVelocity toward target
+      const follow = 1 - Math.exp(-14 * dt);
+      const desired = tray.angle + (targetAngle - tray.angle) * follow;
+      let angVel = (desired - tray.angle) / dt;
+      angVel = clamp(angVel, -3.0, +3.0);
+      Body.setAngularVelocity(tray, angVel);
+
+      // Hard clamp angle
+      if(tray.angle > 0.62){ Body.setAngle(tray, 0.62); Body.setAngularVelocity(tray, 0); }
+      if(tray.angle < -0.62){ Body.setAngle(tray, -0.62); Body.setAngularVelocity(tray, 0); }
 
       Engine.update(engine, dt*1000);
 
       drawBG();
       drawMarkers();
 
-      const bodies = Composite.allBodies(world);
-      countsEl.textContent = "bodies: " + bodies.length;
+      countsEl.textContent = "bodies: " + Composite.allBodies(world).length;
 
       if(ticks % 30 === 0){
-        log(`tick=${ticks} trayPos=(${tray.position.x.toFixed(1)},${tray.position.y.toFixed(1)}) trayAngle=${tray.angle.toFixed(3)}`);
+        log(`tick=${ticks} trayPos=(${tray.position.x.toFixed(1)},${tray.position.y.toFixed(1)}) trayAngle=${tray.angle.toFixed(3)} angVel=${tray.angularVelocity.toFixed(3)}`);
       }
 
       requestAnimationFrame(tick);
