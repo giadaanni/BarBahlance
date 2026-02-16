@@ -1,195 +1,551 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="it">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Bar Bahlance - Pro Edition</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
-        body { margin: 0; padding: 0; background: #111; overflow: hidden; font-family: 'Press Start 2P', cursive; touch-action: none; user-select: none; }
-        #game-container { position: relative; width: 100%; height: 100vh; max-width: 500px; margin: 0 auto; background: #1a1a1a; border: 4px solid #333; }
-        .hud { position: absolute; width: 100%; pointer-events: none; z-index: 100; color: #fff; text-align: center; text-shadow: 2px 2px #000; }
-        #top-hud { top: 20px; display: flex; justify-content: space-between; padding: 0 20px; box-sizing: border-box; font-size: 10px; }
-        #center-msg { top: 40%; left: 50%; transform: translate(-50%, -50%); width: 100%; display: flex; flex-direction: column; align-items: center; }
-        h1 { color: #FFD700; font-size: 24px; margin-bottom: 20px; }
-        .btn { background: #FFD700; color: #000; padding: 15px 30px; font-family: 'Press Start 2P', cursive; border: 4px solid #fff; cursor: pointer; pointer-events: auto; }
-        #countdown { color: #ff4444; font-size: 20px; margin-top: 20px; }
-        .hidden { display: none !important; }
-    </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Bar Bahlance</title>
+  <style>
+    :root { --bg:#0f1115; --panel:rgba(20,24,36,.92); --stroke:rgba(255,255,255,.10); --text:#e8e8e8; --muted:#aeb6c7; }
+    html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+    #stage{position:fixed;inset:0;display:grid;place-items:center;overflow:hidden;}
+    canvas{display:block;touch-action:none;user-select:none;-webkit-user-select:none;border-radius:18px;background:#121625;}
+    #hud{
+      position:fixed; left:max(10px, env(safe-area-inset-left)); right:max(10px, env(safe-area-inset-right));
+      top:max(10px, env(safe-area-inset-top));
+      display:flex; gap:10px; align-items:center; justify-content:space-between;
+      pointer-events:none; z-index:5;
+    }
+    .pill{
+      pointer-events:auto;
+      background:var(--panel);
+      border:1px solid var(--stroke);
+      border-radius:999px; padding:8px 12px; font-size:13px;
+      display:flex; gap:10px; align-items:center; white-space:nowrap;
+      backdrop-filter: blur(8px);
+    }
+    button{pointer-events:auto;border:0;border-radius:999px;padding:8px 12px;background:#2b3350;color:#fff;font-weight:700;}
+    #hint{
+      position:fixed; left:50%; transform:translateX(-50%);
+      bottom:max(12px, env(safe-area-inset-bottom));
+      background:var(--panel); border:1px solid var(--stroke);
+      border-radius:14px; padding:10px 12px; font-size:13px; color:var(--muted);
+      pointer-events:none; max-width:min(560px, calc(100vw - 24px)); text-align:center;
+      backdrop-filter: blur(8px); z-index:5;
+    }
+    #overlay{
+      position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+      background:rgba(0,0,0,.35); backdrop-filter: blur(6px); z-index:10;
+    }
+    #overlay .card{
+      background:rgba(20,24,36,.96); border:1px solid rgba(255,255,255,.10);
+      border-radius:20px; padding:18px 18px 16px; text-align:center;
+      width:min(340px, calc(100vw - 40px));
+    }
+    #overlay .title{font-size:22px;font-weight:800;margin:0 0 6px;}
+    #overlay .sub{font-size:13px;color:var(--muted);margin:0 0 12px;}
+    #overlay .btnRow{display:flex;gap:10px;justify-content:center;}
+  </style>
 </head>
 <body>
+  <div id="stage"><canvas id="c"></canvas></div>
 
-<div id="game-container">
-    <div id="top-hud" class="hud">
-        <div>LVL:<span id="lvl">1</span></div>
-        <div>OBJ:<span id="obj">0/3</span></div>
+  <div id="hud">
+    <div class="pill">
+      <span id="score">Score: 0</span>
+      <span style="opacity:.6">•</span>
+      <span id="items">Items: 0/10</span>
     </div>
-    <div id="center-msg" class="hud">
-        <h1 id="title">BAR BAHLANCE</h1>
-        <button id="start-btn" class="btn">START</button>
-        <div id="countdown" class="hidden">RESISTI: <span id="timer">8</span></div>
+    <div class="pill">
+      <span id="state">OK</span>
+      <button id="restart">Restart</button>
     </div>
-</div>
+  </div>
 
-<script>
-    const { Engine, Render, Runner, Bodies, Body, Composite, Constraint, Events } = Matter;
+  <div id="hint">Trascina a sinistra/destra per ruotare il polso. Ogni tot secondi arriva un nuovo oggetto. Se uno cade: game over.</div>
 
-    const engine = Engine.create();
-    // Aumentiamo la precisione per evitare che gli oggetti passino attraverso il vassoio
-    engine.positionIterations = 10;
+  <div id="overlay">
+    <div class="card">
+      <p class="title">GAME OVER</p>
+      <p class="sub">Un oggetto è caduto dal vassoio.</p>
+      <div class="btnRow">
+        <button id="restart2">Restart</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <script>
+  (() => {
+    const { Engine, World, Bodies, Body, Composite, Constraint, Events } = Matter;
+
+    // ---------- Canvas fit 2:3 ----------
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+
+    const WORLD_W = 900, WORLD_H = 1350; // virtual world (2:3)
+
+    let cw=0, ch=0, dpr=1;
+    function resizeCanvas() {
+      const w = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
+      const h = Math.min(window.innerHeight, document.documentElement.clientHeight || window.innerHeight);
+      dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+
+      const targetH = Math.min(h, w * (3/2));
+      const targetW = targetH * (2/3);
+
+      cw = Math.floor(targetW);
+      ch = Math.floor(targetH);
+
+      canvas.style.width = cw + "px";
+      canvas.style.height = ch + "px";
+      canvas.width = Math.floor(cw * dpr);
+      canvas.height = Math.floor(ch * dpr);
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    window.addEventListener('resize', resizeCanvas, {passive:true});
+    resizeCanvas();
+
+    function worldToScreen() {
+      const s = Math.min(cw / WORLD_W, ch / WORLD_H);
+      const ox = (cw - WORLD_W*s)/2;
+      const oy = (ch - WORLD_H*s)/2;
+      return { s, ox, oy };
+    }
+
+    // ---------- HUD ----------
+    const scoreEl = document.getElementById('score');
+    const itemsEl = document.getElementById('items');
+    const stateEl = document.getElementById('state');
+    const overlayEl = document.getElementById('overlay');
+    const restartBtn = document.getElementById('restart');
+    const restartBtn2 = document.getElementById('restart2');
+
+    const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+    const setState = (s)=>stateEl.textContent=s;
+
+    // ---------- Physics ----------
+    const engine = Engine.create({ enableSleeping:true });
+    engine.gravity.y = 1.05;
+    engine.positionIterations = 12;
     engine.velocityIterations = 10;
+    const world = engine.world;
 
-    const container = document.getElementById('game-container');
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    // walls + floor
+    const wallT = 220;
+    World.add(world, [
+      Bodies.rectangle(-wallT/2, WORLD_H/2, wallT, WORLD_H+1000, {isStatic:true}),
+      Bodies.rectangle(WORLD_W+wallT/2, WORLD_H/2, wallT, WORLD_H+1000, {isStatic:true}),
+      Bodies.rectangle(WORLD_W/2, WORLD_H+90, WORLD_W+1200, 180, {isStatic:true}) // hidden floor (prevents infinite fall)
+    ]);
 
-    const render = Render.create({
-        element: container,
-        engine: engine,
-        options: { width, height, wireframes: false, background: 'transparent' }
+    // ---------- Hand + Tray (pivoted) ----------
+    const wrist = { x: WORLD_W*0.5, y: WORLD_H*0.68 };
+
+    const TRAY_LEN = 640;
+    const TRAY_THK = 36;
+
+    function makeTray(x,y){
+      // tray plank + small lips (helps keep items)
+      const plank = Bodies.rectangle(x, y, TRAY_LEN, TRAY_THK, { chamfer:{radius:14} });
+      const lipL  = Bodies.rectangle(x - TRAY_LEN/2 + 18, y - 12, 26, 34, { chamfer:{radius:7} });
+      const lipR  = Bodies.rectangle(x + TRAY_LEN/2 - 18, y - 12, 26, 34, { chamfer:{radius:7} });
+
+      const tray = Body.create({
+        parts:[plank,lipL,lipR],
+        friction: 1.15,
+        frictionStatic: 1.35,
+        restitution: 0.03,
+        density: 0.0044,
+        label:"tray"
+      });
+      // stabilize rotation a bit
+      tray.frictionAir = 0.02;
+      return tray;
+    }
+
+    const trayHome = { x: wrist.x, y: wrist.y - 115 };
+    const tray = makeTray(trayHome.x, trayHome.y);
+    World.add(world, tray);
+
+    // pivot constraint (polso)
+    const pivot = Constraint.create({
+      pointA: { x: wrist.x, y: wrist.y - 80 },
+      bodyB: tray,
+      pointB: { x: 0, y: 0 },
+      length: 0,
+      stiffness: 0.38,
+      damping: 0.12
+    });
+    World.add(world, pivot);
+
+    // angle control via "target angle" + PD-like torque
+    let targetAngle = 0;
+    const MAX_ANGLE = 0.62; // ~35°
+    const Kp = 0.030;       // proportional
+    const Kd = 0.020;       // damping on angular velocity
+
+    // ---------- Input: drag left/right ----------
+    let dragging=false, lastX=0;
+    function getNormX(e){
+      const rect = canvas.getBoundingClientRect();
+      const cx = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+      return (cx - rect.left) / rect.width; // 0..1
+    }
+    function onDown(e){
+      dragging=true;
+      lastX=getNormX(e);
+    }
+    function onMove(e){
+      if(!dragging) return;
+      const x=getNormX(e);
+      const dx=x-lastX;
+      lastX=x;
+      targetAngle = clamp(targetAngle + dx*2.6, -MAX_ANGLE, +MAX_ANGLE);
+    }
+    function onUp(){ dragging=false; }
+
+    canvas.addEventListener('pointerdown', (e)=>{ canvas.setPointerCapture(e.pointerId); onDown(e); }, {passive:true});
+    canvas.addEventListener('pointermove', (e)=>onMove(e), {passive:true});
+    canvas.addEventListener('pointerup', onUp, {passive:true});
+    canvas.addEventListener('pointercancel', onUp, {passive:true});
+    canvas.addEventListener('touchstart', onDown, {passive:true});
+    canvas.addEventListener('touchmove', onMove, {passive:true});
+    canvas.addEventListener('touchend', onUp, {passive:true});
+
+    // ---------- Items: keep Google’s shapes, but scaled + tuned ----------
+    const items = [];
+    const MAX_ITEMS = 10;
+
+    function createBottle(x,y){
+      // Google-style: base + neck, but larger and with chamfer
+      const base = Bodies.rectangle(x, y+30, 60, 150, { chamfer:{radius:18} });
+      const neck = Bodies.rectangle(x, y-70, 26, 70,  { chamfer:{radius:12} });
+      const cap  = Bodies.rectangle(x, y-120, 34, 22, { chamfer:{radius:8} });
+
+      const b = Body.create({
+        parts:[base,neck,cap],
+        friction: 0.65,
+        restitution: 0.01,
+        density: 0.0039,
+        label:"obj"
+      });
+      b.plugin = { kind:"bottle", touched:false };
+      return b;
+    }
+
+    function createWineGlass(x,y){
+      // Google-style: base + stem + cup (use trapezoid)
+      const base = Bodies.rectangle(x, y+92, 110, 20, { chamfer:{radius:12} });
+      const stem = Bodies.rectangle(x, y+35, 18, 88,  { chamfer:{radius:8} });
+      const cup  = Bodies.trapezoid(x, y-25, 120, 110, 0.6, { chamfer:{radius:14} });
+
+      const g = Body.create({
+        parts:[base,stem,cup],
+        friction: 0.55,
+        restitution: 0.01,
+        density: 0.0030,
+        label:"obj"
+      });
+      g.plugin = { kind:"wine", touched:false };
+      return g;
+    }
+
+    function createBeerMug(x,y){
+      // heavier, stable, iconic block with chamfer
+      const mug = Bodies.rectangle(x, y+20, 110, 120, { chamfer:{radius:18} });
+      const handle = Bodies.rectangle(x+70, y+20, 26, 70, { chamfer:{radius:12} });
+
+      const m = Body.create({
+        parts:[mug,handle],
+        friction: 0.95,
+        restitution: 0.01,
+        density: 0.0046,
+        label:"obj"
+      });
+      m.plugin = { kind:"mug", touched:false };
+      return m;
+    }
+
+    function spawnOne(){
+      const x = WORLD_W * (0.28 + Math.random()*0.44);
+      const y = WORLD_H * 0.08;
+
+      const r = Math.random();
+      const body = (r < 0.34) ? createBottle(x,y) : (r < 0.68) ? createWineGlass(x,y) : createBeerMug(x,y);
+
+      // small random tilt, but not too much
+      Body.setAngle(body, (Math.random()*0.10 - 0.05));
+      Body.setAngularVelocity(body, (Math.random()*0.02 - 0.01));
+
+      items.push(body);
+      World.add(world, body);
+    }
+
+    // mark first contact with tray (useful to avoid weird false losses)
+    Events.on(engine, "collisionStart", (evt)=>{
+      for(const pair of evt.pairs){
+        const a = pair.bodyA, b = pair.bodyB;
+        let obj=null;
+        if(a.label==="tray" && b.label==="obj") obj=b;
+        else if(b.label==="tray" && a.label==="obj") obj=a;
+        if(obj && obj.plugin) obj.plugin.touched = true;
+      }
     });
 
-    let tray, pivot, items = [], status = "MENU", level = 1, spawned = 0, spawnTimer, winTimer;
+    // ---------- Game loop ----------
+    let alive = true;
+    let score = 0;
+    let time = 0;
 
-    // --- FABBRICA DEGLI OGGETTI (Forme Complesse) ---
-    function createItem(x) {
-        const type = Math.random();
-        let compoundBody;
+    let spawnEvery = 2.2;   // start
+    let nextSpawn  = 1.2;
 
-        if (type < 0.33) {
-            // BOTTIGLIA (Corpo + Collo)
-            const base = Bodies.rectangle(x, -50, 25, 60);
-            const neck = Bodies.rectangle(x, -95, 10, 30);
-            compoundBody = Body.create({
-                parts: [base, neck],
-                friction: 0.5, density: 0.01,
-                render: { fillStyle: '#2ecc71' }
-            });
-        } else if (type < 0.66) {
-            // CALICE (Base + Stelo + Coppa)
-            const b = Bodies.rectangle(x, -30, 30, 5);
-            const s = Bodies.rectangle(x, -45, 5, 25);
-            const c = Bodies.trapezoid(x, -70, 35, 30, 0.7, { angle: Math.PI });
-            compoundBody = Body.create({
-                parts: [b, s, c],
-                friction: 0.3, density: 0.005,
-                render: { fillStyle: '#e74c3c' }
-            });
-        } else {
-            // BOCCALE (Rettangolo solido e pesante)
-            compoundBody = Bodies.rectangle(x, -50, 45, 55, {
-                friction: 0.8, density: 0.02,
-                render: { fillStyle: '#f1c40f', strokeStyle: '#fff', lineWidth: 2 }
-            });
+    function countItems(){
+      let n=0;
+      for(const b of Composite.allBodies(world)) if(b.label==="obj") n++;
+      return n;
+    }
+
+    function gameOver(){
+      alive=false;
+      setState("GAME OVER");
+      overlayEl.style.display="flex";
+    }
+
+    function reset(){
+      // remove items
+      for(const b of Composite.allBodies(world)){
+        if(b.label==="obj") World.remove(world, b);
+      }
+      items.length = 0;
+
+      // reset tray
+      Body.setPosition(tray, trayHome);
+      Body.setVelocity(tray, {x:0,y:0});
+      Body.setAngle(tray, 0);
+      Body.setAngularVelocity(tray, 0);
+
+      targetAngle = 0;
+      alive=true;
+      score=0;
+      time=0;
+      spawnEvery=2.2;
+      nextSpawn=1.2;
+
+      overlayEl.style.display="none";
+      setState("OK");
+    }
+    restartBtn.addEventListener('click', reset);
+    restartBtn2.addEventListener('click', reset);
+
+    function updateControl(){
+      // PD control torque toward targetAngle
+      const angleErr = targetAngle - tray.angle;
+      const torque = angleErr * Kp - tray.angularVelocity * Kd;
+      Body.applyTorque(tray, torque);
+
+      // hard clamp angles (prevents flipping / stuck)
+      if(tray.angle > MAX_ANGLE){
+        Body.setAngle(tray, MAX_ANGLE);
+        Body.setAngularVelocity(tray, 0);
+      } else if(tray.angle < -MAX_ANGLE){
+        Body.setAngle(tray, -MAX_ANGLE);
+        Body.setAngularVelocity(tray, 0);
+      }
+    }
+
+    function updateSpawning(dt){
+      if(!alive) return;
+      if(countItems() >= MAX_ITEMS) return;
+
+      if(time >= nextSpawn){
+        spawnOne();
+
+        // difficulty ramp: slightly faster spawns over time
+        spawnEvery = Math.max(1.4, spawnEvery * 0.993);
+        nextSpawn = time + spawnEvery;
+      }
+    }
+
+    function updateLose(){
+      if(!alive) return;
+
+      // lose when any object falls below visible world
+      // (robust: no false positives from angle)
+      for(const b of Composite.allBodies(world)){
+        if(b.label!=="obj") continue;
+
+        // ignore first ~0.2s after spawn to avoid any weird init
+        // (if it spawns slightly below top on some devices)
+        if(b.plugin && !b.plugin._bornAt) b.plugin._bornAt = time;
+        if(b.plugin && (time - b.plugin._bornAt) < 0.20) continue;
+
+        if(b.position.y > WORLD_H + 40){
+          gameOver();
+          return;
         }
-        
-        items.push(compoundBody);
-        Composite.add(engine.world, compoundBody);
+      }
     }
 
-    function createTray() {
-        // Vassoio con spessore maggiore per evitare compenetrazioni
-        tray = Bodies.rectangle(width/2, height - 200, 280, 20, {
-            friction: 1, restitution: 0.1, density: 0.01,
-            render: { fillStyle: '#8B4513' }
-        });
+    // ---------- Rendering (vector look) ----------
+    function roundRect(ctx, x, y, w, h, r){
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x+rr, y);
+      ctx.arcTo(x+w, y, x+w, y+h, rr);
+      ctx.arcTo(x+w, y+h, x, y+h, rr);
+      ctx.arcTo(x, y+h, x, y, rr);
+      ctx.arcTo(x, y, x+w, y);
+      ctx.closePath();
+    }
+    function drawBackground(){
+      const {s,ox,oy} = worldToScreen();
+      ctx.save();
+      ctx.translate(ox,oy);
+      ctx.fillStyle="#121625";
+      ctx.fillRect(0,0, WORLD_W*s, WORLD_H*s);
 
-        pivot = Constraint.create({
-            pointA: { x: width/2, y: height - 180 },
-            bodyB: tray,
-            stiffness: 0.2, damping: 0.1, length: 0,
-            render: { visible: true, strokeStyle: '#555', lineWidth: 2 }
-        });
-
-        Composite.add(engine.world, [tray, pivot]);
+      // subtle grid
+      ctx.globalAlpha=0.12;
+      ctx.strokeStyle="#9aa3b2";
+      ctx.lineWidth=1;
+      const step=90*s;
+      for(let x=0;x<=WORLD_W*s;x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,WORLD_H*s); ctx.stroke(); }
+      for(let y=0;y<=WORLD_H*s;y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(WORLD_W*s,y); ctx.stroke(); }
+      ctx.globalAlpha=1;
+      ctx.restore();
     }
 
-    // --- LOGICA DI GIOCO ---
-    function initLevel() {
-        Composite.clear(engine.world);
-        items = []; spawned = 0;
-        document.getElementById('lvl').innerText = level;
-        document.getElementById('obj').innerText = `0/${2+level}`;
-        document.getElementById('center-msg').classList.add('hidden');
-        
-        createTray();
-        status = "PLAYING";
+    function drawArmAndHand(){
+      const {s,ox,oy} = worldToScreen();
+      ctx.save();
+      ctx.translate(ox,oy);
+      ctx.scale(s,s);
 
-        spawnTimer = setInterval(() => {
-            if (spawned < 2 + level) {
-                createItem(width/2 + (Math.random() * 220 - 110));
-                spawned++;
-                document.getElementById('obj').innerText = `${spawned}/${2+level}`;
-            } else {
-                clearInterval(spawnTimer);
-                startWinCount();
-            }
-        }, 2000);
+      // forearm
+      ctx.save();
+      ctx.translate(wrist.x, wrist.y + 260);
+      ctx.rotate(-0.15);
+      ctx.fillStyle="#b28b68";
+      roundRect(ctx, -120, -40, 240, 600, 90);
+      ctx.fill();
+      ctx.restore();
+
+      // hand (follows tray angle)
+      ctx.save();
+      ctx.translate(wrist.x, wrist.y + 55);
+      ctx.rotate(tray.angle * 0.95);
+      ctx.fillStyle="#caa07a";
+      roundRect(ctx, -185, -55, 370, 110, 55);
+      ctx.fill();
+      ctx.fillStyle="#d3ac86";
+      for(let i=0;i<4;i++){
+        roundRect(ctx, -160 + i*82, -108, 66, 60, 22);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      ctx.restore();
     }
 
-    function startWinCount() {
-        status = "WINNING";
-        const msg = document.getElementById('countdown');
-        msg.classList.remove('hidden');
-        let time = 8;
-        document.getElementById('timer').innerText = time;
+    function drawTray(){
+      const {s,ox,oy} = worldToScreen();
+      ctx.save();
+      ctx.translate(ox,oy);
+      ctx.scale(s,s);
 
-        winTimer = setInterval(() => {
-            time--;
-            document.getElementById('timer').innerText = time;
-            if (time <= 0) {
-                clearInterval(winTimer);
-                level++;
-                initLevel();
-            }
-        }, 1000);
+      ctx.save();
+      ctx.translate(tray.position.x, tray.position.y);
+      ctx.rotate(tray.angle);
+
+      // shadow
+      ctx.globalAlpha=0.25;
+      ctx.fillStyle="#000";
+      roundRect(ctx, -330, -10, 660, 40, 18);
+      ctx.fill();
+      ctx.globalAlpha=1;
+
+      // tray
+      ctx.fillStyle="#3b4258";
+      roundRect(ctx, -320, -20, 640, 36, 16);
+      ctx.fill();
+
+      // rim highlight
+      ctx.strokeStyle="rgba(255,255,255,.18)";
+      ctx.lineWidth=3;
+      roundRect(ctx, -312, -16, 624, 28, 14);
+      ctx.stroke();
+
+      ctx.restore();
+      ctx.restore();
     }
 
-    function gameOver() {
-        status = "GAMEOVER";
-        clearInterval(spawnTimer);
-        clearInterval(winTimer);
-        document.getElementById('title').innerText = "VETRO ROTTO!";
-        document.getElementById('start-btn').innerText = "RIPROVA";
-        document.getElementById('center-msg').classList.remove('hidden');
-        document.getElementById('countdown').classList.add('hidden');
-        level = 1;
+    function drawObj(body){
+      // flat colors by kind (simple + readable)
+      const kind = body.plugin?.kind || "obj";
+      let fill = "#d8e2ff";
+      if(kind==="bottle") fill="#6be7a5";
+      if(kind==="wine")   fill="#ff6b6b";
+      if(kind==="mug")    fill="#ffd45c";
+
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = "rgba(255,255,255,.18)";
+      ctx.lineWidth = 2;
+
+      ctx.beginPath();
+      const v = body.vertices;
+      ctx.moveTo(v[0].x, v[0].y);
+      for(let i=1;i<v.length;i++) ctx.lineTo(v[i].x, v[i].y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
     }
 
-    // --- CONTROLLI E VINCOLI ---
-    let mouseX = width / 2;
-    window.addEventListener('mousemove', (e) => mouseX = e.clientX);
-    window.addEventListener('touchmove', (e) => mouseX = e.touches[0].clientX);
+    function drawItems(){
+      const {s,ox,oy} = worldToScreen();
+      ctx.save();
+      ctx.translate(ox,oy);
+      ctx.scale(s,s);
 
-    Events.on(engine, 'beforeUpdate', () => {
-        if (status !== "PLAYING" && status !== "WINNING") return;
+      for(const b of Composite.allBodies(world)){
+        if(b.label==="obj") drawObj(b);
+      }
 
-        // 1. Movimento basato su mouse/touch
-        const torque = (mouseX - width/2) / (width/2) * 0.15;
-        Body.setAngularVelocity(tray, tray.angularVelocity + torque);
+      ctx.restore();
+    }
 
-        // 2. IL BLOCCO A 40 GRADI (Limitatore rotazione)
-        const limit = 0.7; // Circa 40 gradi in radianti
-        if (tray.angle > limit) {
-            Body.setAngle(tray, limit);
-            Body.setAngularVelocity(tray, 0);
-        }
-        if (tray.angle < -limit) {
-            Body.setAngle(tray, -limit);
-            Body.setAngularVelocity(tray, 0);
-        }
+    // ---------- Main loop ----------
+    let last = performance.now();
+    function tick(now){
+      const dt = Math.min(0.033, (now - last)/1000);
+      last = now;
 
-        // 3. Controllo caduta oggetti
-        items.forEach(item => {
-            if (item.position.y > height) gameOver();
-        });
-    });
+      if(alive){
+        time += dt;
+        score += dt * (2 + 0.25 * countItems());
+      }
 
-    document.getElementById('start-btn').addEventListener('click', () => initLevel());
+      updateControl();
+      updateSpawning(dt);
 
-    Render.run(render);
-    Runner.run(Runner.create(), engine);
-</script>
+      Engine.update(engine, dt*1000);
+
+      updateLose();
+
+      drawBackground();
+      drawArmAndHand();
+      drawTray();
+      drawItems();
+
+      scoreEl.textContent = `Score: ${Math.floor(score)}`;
+      itemsEl.textContent = `Items: ${countItems()}/${MAX_ITEMS}`;
+
+      requestAnimationFrame(tick);
+    }
+
+    reset();
+    requestAnimationFrame(tick);
+  })();
+  </script>
 </body>
 </html>
