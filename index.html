@@ -3,18 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Bar Bahlance v82 debug</title>
+  <title>Bar Bahlance v83 debug</title>
   <style>
-    :root{--bg:#0f1115;--panel:rgba(20,24,36,.92);--stroke:rgba(255,255,255,.12);--text:#e8e8e8;--muted:#aeb6c7;}
+    :root{--bg:#0f1115;--panel:rgba(20,24,36,.92);--stroke:rgba(255,255,255,.12);--text:#e8e8e8;}
     html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
     #stage{position:fixed;inset:0;display:grid;place-items:center;overflow:hidden;}
     canvas{display:block;touch-action:none;user-select:none;-webkit-user-select:none;border-radius:18px;background:#121625;}
     #hud{position:fixed;left:10px;right:10px;top:10px;display:flex;justify-content:space-between;gap:10px;z-index:5;pointer-events:none;}
-    .pill{pointer-events:none;background:var(--panel);border:1px solid var(--stroke);border-radius:999px;padding:8px 12px;font-size:13px;backdrop-filter:blur(8px);display:flex;gap:10px;align-items:center;white-space:nowrap;}
+    .pill{background:var(--panel);border:1px solid var(--stroke);border-radius:999px;padding:8px 12px;font-size:13px;backdrop-filter:blur(8px);display:flex;gap:10px;align-items:center;white-space:nowrap;}
     #debug{
       position:fixed;left:10px;right:10px;bottom:10px;z-index:9999;
       background:rgba(0,0,0,.65);border:1px solid rgba(255,255,255,.15);border-radius:12px;
       padding:10px;font-size:12px;line-height:1.35;white-space:pre-wrap;max-height:34vh;overflow:auto;
+      pointer-events:none; /* IMPORTANT: non blocca i tocchi */
     }
     #debug b{color:#fff}
   </style>
@@ -23,7 +24,7 @@
   <div id="stage"><canvas id="c"></canvas></div>
 
   <div id="hud">
-    <div class="pill"><span>v82</span><span style="opacity:.6">•</span><span id="status">boot</span></div>
+    <div class="pill"><span>v83</span><span style="opacity:.6">•</span><span id="status">boot</span></div>
     <div class="pill"><span id="counts">bodies: -</span></div>
   </div>
 
@@ -41,13 +42,9 @@
     window.addEventListener('unhandledrejection', (e)=>log("REJECTION: " + (e.reason?.message || e.reason)));
 
     log("Matter loaded? " + (!!window.Matter));
-    if(!window.Matter){
-      statusEl.textContent = "Matter FAIL";
-      log("STOP: matter.js non caricato");
-      return;
-    }
+    if(!window.Matter){ statusEl.textContent="Matter FAIL"; return; }
 
-    const { Engine, World, Bodies, Body, Composite, Constraint } = Matter;
+    const { Engine, World, Bodies, Body, Composite } = Matter;
 
     // Canvas fit 2:3
     const canvas = document.getElementById('c');
@@ -62,12 +59,9 @@
       dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
       const targetH = Math.min(h, w*(3/2));
       const targetW = targetH*(2/3);
-      cw = Math.floor(targetW);
-      ch = Math.floor(targetH);
-      canvas.style.width = cw+"px";
-      canvas.style.height = ch+"px";
-      canvas.width = Math.floor(cw*dpr);
-      canvas.height = Math.floor(ch*dpr);
+      cw = Math.floor(targetW); ch = Math.floor(targetH);
+      canvas.style.width = cw+"px"; canvas.style.height = ch+"px";
+      canvas.width = Math.floor(cw*dpr); canvas.height = Math.floor(ch*dpr);
       ctx.setTransform(dpr,0,0,dpr,0,0);
       log(`resize: css=${cw}x${ch} dpr=${dpr} backing=${canvas.width}x${canvas.height}`);
     }
@@ -85,7 +79,7 @@
       return {x:ox + x*s, y:oy + y*s, s};
     }
 
-    // Physics minimal (tray + pivot only)
+    // Physics
     const engine = Engine.create({ enableSleeping:true });
     engine.gravity.y = 1.0;
     engine.positionIterations = 12;
@@ -102,42 +96,45 @@
     const wrist = { x: WORLD_W*0.5, y: WORLD_H*0.68 };
     const trayHome = { x: wrist.x, y: wrist.y - 115 };
 
-    const tray = Bodies.rectangle(trayHome.x, trayHome.y, 640, 36, { chamfer:{radius:14}, friction:1.2, label:"tray" });
+    const tray = Bodies.rectangle(trayHome.x, trayHome.y, 640, 36, {
+      chamfer:{radius:14}, friction:1.2, label:"tray"
+    });
+    // Stabilizza: niente rotazioni “strane” dovute all’inerzia
+    tray.inertia = Infinity;
     World.add(world, tray);
 
-    const pivot = Constraint.create({
-      pointA: { x: wrist.x, y: wrist.y - 80 },
-      bodyB: tray,
-      length: 0,
-      stiffness: 0.38,
-      damping: 0.12
-    });
-    World.add(world, pivot);
-
-    // drag control
+    // Input drag (su window per essere sicuri che i touch arrivino)
     let targetAngle=0, dragging=false, lastX=0;
     function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-    function getNormX(e){
-      const rect=canvas.getBoundingClientRect();
-      const cx=(e.touches&&e.touches[0])?e.touches[0].clientX:e.clientX;
-      return (cx-rect.left)/rect.width;
-    }
-    function down(e){ dragging=true; lastX=getNormX(e); }
-    function move(e){
-      if(!dragging) return;
-      const x=getNormX(e); const dx=x-lastX; lastX=x;
-      targetAngle = clamp(targetAngle + dx*2.6, -0.62, +0.62);
-    }
-    function up(){ dragging=false; }
-    canvas.addEventListener('pointerdown', (e)=>{ canvas.setPointerCapture(e.pointerId); down(e); }, {passive:true});
-    canvas.addEventListener('pointermove', move, {passive:true});
-    canvas.addEventListener('pointerup', up, {passive:true});
-    canvas.addEventListener('pointercancel', up, {passive:true});
-    canvas.addEventListener('touchstart', down, {passive:true});
-    canvas.addEventListener('touchmove', move, {passive:true});
-    canvas.addEventListener('touchend', up, {passive:true});
 
-    // loop
+    function getNormXFromClientX(clientX){
+      const rect = canvas.getBoundingClientRect();
+      return (clientX - rect.left) / rect.width;
+    }
+
+    function startDrag(clientX){
+      dragging = true;
+      lastX = getNormXFromClientX(clientX);
+    }
+    function moveDrag(clientX){
+      if(!dragging) return;
+      const x = getNormXFromClientX(clientX);
+      const dx = x - lastX;
+      lastX = x;
+      targetAngle = clamp(targetAngle + dx*2.8, -0.62, +0.62);
+    }
+    function endDrag(){ dragging=false; }
+
+    window.addEventListener('pointerdown', (e)=>startDrag(e.clientX), {passive:true});
+    window.addEventListener('pointermove', (e)=>moveDrag(e.clientX), {passive:true});
+    window.addEventListener('pointerup', endDrag, {passive:true});
+    window.addEventListener('pointercancel', endDrag, {passive:true});
+
+    window.addEventListener('touchstart', (e)=>startDrag(e.touches[0].clientX), {passive:true});
+    window.addEventListener('touchmove', (e)=>moveDrag(e.touches[0].clientX), {passive:true});
+    window.addEventListener('touchend', endDrag, {passive:true});
+
+    // Loop
     let last=performance.now(), ticks=0;
     statusEl.textContent = "running";
 
@@ -176,18 +173,17 @@
     }
 
     function tick(now){
-      const dt = Math.min(0.033, (now-last)/1000); last=now; ticks++;
+      const dt = Math.min(0.033, (now-last)/1000);
+      last=now; ticks++;
 
-      // Instead of Body.applyTorque (not present): setAngularVelocity toward target
-      const follow = 1 - Math.exp(-14 * dt);
-      const desired = tray.angle + (targetAngle - tray.angle) * follow;
-      let angVel = (desired - tray.angle) / dt;
-      angVel = clamp(angVel, -3.0, +3.0);
-      Body.setAngularVelocity(tray, angVel);
+      // KINEMATIC tray: posizione fissa + angolo imposto (NO sballa)
+      const follow = 1 - Math.exp(-18*dt);
+      const newAngle = tray.angle + (targetAngle - tray.angle)*follow;
 
-      // Hard clamp angle
-      if(tray.angle > 0.62){ Body.setAngle(tray, 0.62); Body.setAngularVelocity(tray, 0); }
-      if(tray.angle < -0.62){ Body.setAngle(tray, -0.62); Body.setAngularVelocity(tray, 0); }
+      Body.setPosition(tray, trayHome);
+      Body.setVelocity(tray, {x:0,y:0});
+      Body.setAngle(tray, newAngle);
+      Body.setAngularVelocity(tray, 0);
 
       Engine.update(engine, dt*1000);
 
@@ -197,7 +193,7 @@
       countsEl.textContent = "bodies: " + Composite.allBodies(world).length;
 
       if(ticks % 30 === 0){
-        log(`tick=${ticks} trayPos=(${tray.position.x.toFixed(1)},${tray.position.y.toFixed(1)}) trayAngle=${tray.angle.toFixed(3)} angVel=${tray.angularVelocity.toFixed(3)}`);
+        log(`tick=${ticks} target=${targetAngle.toFixed(3)} angle=${tray.angle.toFixed(3)} dragging=${dragging}`);
       }
 
       requestAnimationFrame(tick);
