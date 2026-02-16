@@ -3,12 +3,26 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>BarBalance v7-stable</title>
+  <title>BarBalance DEBUG</title>
   <style>
     :root { --bg:#0f1115; --text:#e8e8e8; --muted:#aeb6c7; }
     html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;height:100%;}
     #stage{position:fixed;inset:0;display:grid;place-items:center;overflow:hidden;}
     canvas{display:block;touch-action:none;-webkit-user-select:none;user-select:none;border-radius:18px;background:#121625;}
+    #debug{
+      position:fixed; left:10px; right:10px; bottom:10px;
+      background:rgba(0,0,0,.65);
+      border:1px solid rgba(255,255,255,.15);
+      border-radius:12px;
+      padding:10px;
+      font-size:12px;
+      line-height:1.35;
+      z-index:9999;
+      max-height:38vh;
+      overflow:auto;
+      white-space:pre-wrap;
+    }
+    #debug b{color:#fff}
     #hud{
       position:fixed;
       left:max(10px, env(safe-area-inset-left));
@@ -26,38 +40,6 @@
       display:flex;gap:10px;align-items:center;white-space:nowrap;
       backdrop-filter: blur(8px);
     }
-    button{pointer-events:auto;border:0;border-radius:999px;padding:8px 12px;background:#2b3350;color:#fff;font-weight:700;}
-    button:active{transform:scale(.99)}
-    #hint{
-      position:fixed;left:50%;transform:translateX(-50%);
-      bottom:max(12px, env(safe-area-inset-bottom));
-      background:rgba(20,24,36,.92);
-      border:1px solid rgba(255,255,255,.08);
-      border-radius:14px;padding:10px 12px;font-size:13px;color:var(--muted);
-      pointer-events:none;
-      max-width:min(560px, calc(100vw - 24px));
-      text-align:center;
-      backdrop-filter: blur(8px);
-      z-index:5;
-    }
-    #overlay{
-      position:fixed; inset:0;
-      display:none; align-items:center; justify-content:center;
-      background:rgba(0,0,0,.35);
-      backdrop-filter: blur(6px);
-      z-index:10;
-    }
-    #overlay .card{
-      background:rgba(20,24,36,.96);
-      border:1px solid rgba(255,255,255,.10);
-      border-radius:20px;
-      padding:18px 18px 16px;
-      text-align:center;
-      width:min(330px, calc(100vw - 40px));
-    }
-    #overlay .title{font-size:22px; font-weight:800; margin:0 0 6px;}
-    #overlay .sub{font-size:13px; color:var(--muted); margin:0 0 12px;}
-    #overlay .btnRow{display:flex; gap:10px; justify-content:center;}
   </style>
 </head>
 <body>
@@ -65,391 +47,118 @@
 
   <div id="hud">
     <div class="pill">
-      <span id="score">Score: 0</span>
+      <span>BarBalance</span>
       <span style="opacity:.6">•</span>
-      <span id="items">Items: 0/10</span>
-      <span style="opacity:.6">•</span>
-      <span style="opacity:.85">v7</span>
+      <span>DEBUG</span>
     </div>
     <div class="pill">
-      <span id="state">OK</span>
-      <button id="restart">Restart</button>
+      <span id="status">booting…</span>
     </div>
   </div>
 
-  <div id="hint">Trascina a sinistra/destra per ruotare il polso. Perdi solo quando un oggetto (dopo aver toccato il vassoio) cade davvero sotto.</div>
+  <div id="debug"><b>DEBUG PANEL</b>\n</div>
 
-  <div id="overlay">
-    <div class="card">
-      <p class="title">GAME OVER</p>
-      <p class="sub">Un oggetto è caduto dal vassoio.</p>
-      <div class="btnRow">
-        <button id="restart2">Restart</button>
-      </div>
-    </div>
-  </div>
-
+  <!-- Matter.js from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+
   <script>
-  (() => {
-    const { Engine, World, Bodies, Body, Composite, Events } = Matter;
+    (function(){
+      const dbg = document.getElementById('debug');
+      const statusEl = document.getElementById('status');
+      const log = (msg) => { dbg.textContent += String(msg) + "\n"; };
 
-    const canvas = document.getElementById('c');
-    const ctx = canvas.getContext('2d');
-
-    function getViewport() {
-      const h = Math.min(window.innerHeight, document.documentElement.clientHeight || window.innerHeight);
-      const w = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
-      return { w, h };
-    }
-
-    const RATIO_W = 2, RATIO_H = 3;
-    const WORLD_W = 900, WORLD_H = 1350;
-
-    let cw=0, ch=0, dpr=1;
-
-    function resizeCanvas() {
-      const { w, h } = getViewport();
-      dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-      const targetH = Math.min(h, w * (RATIO_H / RATIO_W));
-      const targetW = targetH * (RATIO_W / RATIO_H);
-      cw = Math.floor(targetW);
-      ch = Math.floor(targetH);
-      canvas.style.width = cw + "px";
-      canvas.style.height = ch + "px";
-      canvas.width = Math.floor(cw * dpr);
-      canvas.height = Math.floor(ch * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-    window.addEventListener('resize', resizeCanvas, { passive:true });
-    resizeCanvas();
-
-    function worldToScreen() {
-      const s = Math.min(cw / WORLD_W, ch / WORLD_H);
-      const ox = (cw - WORLD_W * s) / 2;
-      const oy = (ch - WORLD_H * s) / 2;
-      return { s, ox, oy };
-    }
-
-    const scoreEl = document.getElementById('score');
-    const itemsEl = document.getElementById('items');
-    const stateEl = document.getElementById('state');
-    const restartBtn = document.getElementById('restart');
-    const restartBtn2 = document.getElementById('restart2');
-    const hintEl = document.getElementById('hint');
-    const overlayEl = document.getElementById('overlay');
-
-    function setState(s){ stateEl.textContent = s; }
-    function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-
-    const engine = Engine.create({ enableSleeping: true });
-    engine.gravity.y = 1.0;
-    engine.positionIterations = 12;
-    engine.velocityIterations = 10;
-    const world = engine.world;
-
-    const wallThickness = 180;
-    World.add(world, [
-      Bodies.rectangle(-wallThickness/2, WORLD_H/2, wallThickness, WORLD_H + 800, { isStatic:true }),
-      Bodies.rectangle(WORLD_W + wallThickness/2, WORLD_H/2, wallThickness, WORLD_H + 800, { isStatic:true }),
-      Bodies.rectangle(WORLD_W/2, WORLD_H + wallThickness/2, WORLD_W + 800, wallThickness, { isStatic:true })
-    ]);
-
-    const wrist = { x: WORLD_W*0.5, y: WORLD_H*0.68 };
-    const TRAY_LEN = 640;
-    const TRAY_THK = 34;
-
-    function makeTray(x,y){
-      const plank = Bodies.rectangle(x, y, TRAY_LEN, TRAY_THK, { chamfer:{ radius:12 } });
-      const lipL  = Bodies.rectangle(x - TRAY_LEN/2 + 14, y - 10, 22, 30, { chamfer:{ radius:6 } });
-      const lipR  = Bodies.rectangle(x + TRAY_LEN/2 - 14, y - 10, 22, 30, { chamfer:{ radius:6 } });
-      return Body.create({
-        parts: [plank, lipL, lipR],
-        friction: 1.0,
-        frictionStatic: 1.25,
-        restitution: 0.02,
-        density: 0.0042,
-        inertia: Infinity,
-        label: "tray"
+      // Catch JS errors on iPhone without console
+      window.addEventListener('error', (e) => {
+        log("JS ERROR: " + (e.message || e.error || "unknown"));
       });
-    }
+      window.addEventListener('unhandledrejection', (e) => {
+        log("PROMISE REJECTION: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+      });
 
-    const trayHome = { x: wrist.x, y: wrist.y - 110 };
-    const tray = makeTray(trayHome.x, trayHome.y);
-    World.add(world, tray);
+      log("URL: " + location.href);
+      log("UserAgent: " + navigator.userAgent);
+      log("Matter present? " + (!!window.Matter));
 
-    Body.setPosition(tray, trayHome);
-    Body.setVelocity(tray, { x: 0, y: 0 });
-    Body.setAngle(tray, 0);
-    Body.setAngularVelocity(tray, 0);
-
-    let targetAngle = 0;
-    const MAX_ANGLE = 0.36;
-    const SENS = 2.0;
-    let dragging=false, lastX=0;
-
-    function getPointerX(e) {
-      const rect = canvas.getBoundingClientRect();
-      const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
-      return (clientX - rect.left) / rect.width;
-    }
-
-    function onDown(e){ dragging=true; lastX=getPointerX(e); hintEl.style.opacity=0; }
-    function onMove(e){
-      if(!dragging) return;
-      const x=getPointerX(e);
-      const dx=x-lastX; lastX=x;
-      targetAngle = clamp(targetAngle + dx*SENS, -MAX_ANGLE, +MAX_ANGLE);
-    }
-    function onUp(){ dragging=false; }
-
-    canvas.addEventListener('pointerdown', (e)=>{ canvas.setPointerCapture(e.pointerId); onDown(e); }, { passive:true });
-    canvas.addEventListener('pointermove', (e)=>onMove(e), { passive:true });
-    canvas.addEventListener('pointerup', onUp, { passive:true });
-    canvas.addEventListener('pointercancel', onUp, { passive:true });
-    canvas.addEventListener('touchstart', onDown, { passive:true });
-    canvas.addEventListener('touchmove', onMove, { passive:true });
-    canvas.addEventListener('touchend', onUp, { passive:true });
-
-    function controlTray(dt){
-      const follow = 1 - Math.exp(-18 * dt);
-      const newAngle = tray.angle + (targetAngle - tray.angle) * follow;
-      const angVel = (newAngle - tray.angle) / dt;
-
-      Body.setAngle(tray, newAngle);
-      Body.setAngularVelocity(tray, clamp(angVel, -3.2, 3.2));
-      Body.setPosition(tray, trayHome);
-      Body.setVelocity(tray, { x: 0, y: 0 });
-    }
-
-    const MAX_ITEMS = 10;
-    let alive=true, score=0, t=0;
-    let spawnEvery=2.8, nextSpawn=2.8;
-
-    function countItems(){
-      const bodies = Composite.allBodies(world);
-      let n=0;
-      for (const b of bodies) if (b.label==="obj") n++;
-      return n;
-    }
-
-    function makeObj(kind, x,y){
-      if (kind==="bottle"){
-        const body = Bodies.rectangle(x, y+26, 66, 140, { chamfer:{radius:14} });
-        const shoulder = Bodies.rectangle(x, y-26, 56, 34, { chamfer:{radius:12} });
-        const neck = Bodies.rectangle(x, y-66, 30, 56, { chamfer:{radius:10} });
-        const cap  = Bodies.rectangle(x, y-100, 36, 18, { chamfer:{radius:7} });
-        return Body.create({ parts:[body, shoulder, neck, cap], friction:0.72, restitution:0.01, density:0.0038, label:"obj" });
-      }
-      if (kind==="wine"){
-        const bowl = Bodies.rectangle(x, y-46, 88, 78, { chamfer:{radius:20} });
-        const stem = Bodies.rectangle(x, y+22, 16, 70, { chamfer:{radius:6} });
-        const base = Bodies.rectangle(x, y+74, 92, 18, { chamfer:{radius:10} });
-        return Body.create({ parts:[bowl, stem, base], friction:0.62, restitution:0.01, density:0.0029, label:"obj" });
-      }
-      // tumbler
-      const shell = Bodies.rectangle(x, y-16, 80, 88, { chamfer:{radius:12} });
-      const base  = Bodies.rectangle(x, y+26, 64, 22, { chamfer:{radius:10} });
-      return Body.create({ parts:[shell, base], friction:0.95, restitution:0.01, density:0.0032, label:"obj" });
-    }
-
-    function spawnOne(){
-      const x = WORLD_W * (0.26 + Math.random()*0.48);
-      const y = WORLD_H * 0.08;
-      const r = Math.random();
-      const kind = (r < 0.42) ? "tumbler" : (r < 0.76) ? "wine" : "bottle";
-      const body = makeObj(kind, x,y);
-
-      body.plugin = body.plugin || {};
-      body.plugin.spawnedAt = t;
-      body.plugin.touchedTray = false;
-
-      Body.setAngle(body, (Math.random()*0.12 - 0.06));
-      World.add(world, body);
-    }
-
-    function maybeSpawn(){
-      if (!alive) return;
-      if (countItems() >= MAX_ITEMS) return;
-      if (t < nextSpawn) return;
-
-      nextSpawn = t + spawnEvery;
-      spawnOne();
-    }
-
-    Events.on(engine, "collisionStart", (evt) => {
-      for (const pair of evt.pairs) {
-        const a = pair.bodyA, b = pair.bodyB;
-        let obj=null;
-        if (a.label==="tray" && b.label==="obj") obj=b;
-        else if (b.label==="tray" && a.label==="obj") obj=a;
-        if (obj) obj.plugin.touchedTray = true;
-      }
-    });
-
-    function gameOver(){
-      alive=false;
-      setState("GAME OVER");
-      overlayEl.style.display="flex";
-    }
-
-    function checkLose(){
-      if (!alive) return;
-      const trayY = tray.position.y;
-      const bodies = Composite.allBodies(world);
-      for (const b of bodies) {
-        if (b.label!=="obj") continue;
-
-        // Only start losing logic AFTER it has touched the tray at least once.
-        if (!b.plugin?.touchedTray) continue;
-
-        // If it fell clearly below tray -> lose
-        if (b.bounds.min.y > trayY + 170) { gameOver(); return; }
-      }
-    }
-
-    function reset(){
-      const bodies = Composite.allBodies(world);
-      for (const b of bodies) if (b.label==="obj") World.remove(world, b);
-
-      alive=true; score=0; t=0;
-      spawnEvery=2.8; nextSpawn=2.8;
-      targetAngle=0;
-
-      Body.setAngle(tray, 0);
-      Body.setAngularVelocity(tray, 0);
-      Body.setPosition(tray, trayHome);
-      Body.setVelocity(tray, {x:0,y:0});
-
-      overlayEl.style.display="none";
-      hintEl.style.opacity=1;
-      setState("OK");
-    }
-    restartBtn.addEventListener('click', reset);
-    restartBtn2.addEventListener('click', reset);
-
-    function roundRect(ctx, x, y, w, h, r){
-      const rr = Math.min(r, w/2, h/2);
-      ctx.beginPath();
-      ctx.moveTo(x+rr, y);
-      ctx.arcTo(x+w, y, x+w, y+h, rr);
-      ctx.arcTo(x+w, y+h, x, y+h, rr);
-      ctx.arcTo(x, y+h, x, y, rr);
-      ctx.arcTo(x, y, x+w, y);
-      ctx.closePath();
-    }
-    function drawBackground(){
-      const { s, ox, oy } = worldToScreen();
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.fillStyle = "#121625";
-      ctx.fillRect(0,0, WORLD_W*s, WORLD_H*s);
-      ctx.restore();
-    }
-    function drawArmAndHand(){
-      const { s, ox, oy } = worldToScreen();
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.scale(s, s);
-
-      ctx.save();
-      ctx.translate(wrist.x, wrist.y + 250);
-      ctx.rotate(-0.15);
-      ctx.fillStyle = "#b28b68";
-      roundRect(ctx, -120, -40, 240, 580, 90);
-      ctx.fill();
-      ctx.restore();
-
-      ctx.save();
-      ctx.translate(wrist.x, wrist.y + 50);
-      ctx.rotate(tray.angle * 0.95);
-      ctx.fillStyle = "#caa07a";
-      roundRect(ctx, -175, -52, 350, 104, 52);
-      ctx.fill();
-
-      ctx.fillStyle = "#d3ac86";
-      for (let i=0;i<4;i++){
-        roundRect(ctx, -155 + i*78, -102, 62, 58, 22);
-        ctx.fill();
-      }
-      ctx.restore();
-
-      ctx.restore();
-    }
-    function pathVertices(verts){
-      ctx.beginPath();
-      ctx.moveTo(verts[0].x, verts[0].y);
-      for (let i=1;i<verts.length;i++) ctx.lineTo(verts[i].x, verts[i].y);
-      ctx.closePath();
-    }
-    function drawBodies(){
-      const { s, ox, oy } = worldToScreen();
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.scale(s, s);
-
-      const bodies = Composite.allBodies(world);
-
-      ctx.save();
-      ctx.translate(tray.position.x, tray.position.y);
-      ctx.rotate(tray.angle);
-
-      ctx.globalAlpha = 0.25;
-      ctx.fillStyle = "#000";
-      roundRect(ctx, -330, -10, 660, 38, 18);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-
-      ctx.fillStyle = "#3b4258";
-      roundRect(ctx, -320, -18, 640, 34, 16);
-      ctx.fill();
-
-      ctx.strokeStyle = "rgba(255,255,255,.18)";
-      ctx.lineWidth = 3;
-      roundRect(ctx, -312, -14, 624, 26, 14);
-      ctx.stroke();
-      ctx.restore();
-
-      for (const b of bodies) {
-        if (b.label!=="obj") continue;
-        ctx.fillStyle = "#d8e2ff";
-        ctx.strokeStyle = "rgba(255,255,255,.18)";
-        ctx.lineWidth = 2;
-        pathVertices(b.vertices);
-        ctx.fill(); ctx.stroke();
+      if (!window.Matter) {
+        statusEl.textContent = "Matter.js NOT loaded";
+        log("STOP: Matter.js non è stato caricato dal CDN. Soluzione: scaricalo in repo e linkalo localmente.");
+        return;
       }
 
-      ctx.restore();
-    }
+      statusEl.textContent = "Matter OK, starting…";
 
-    let last = performance.now();
-    function tick(now){
-      const dt = Math.min(0.033, (now - last) / 1000);
-      last = now;
+      const { Engine, World, Bodies, Body } = Matter;
 
-      if (alive) {
-        t += dt;
-        maybeSpawn();
-        score += dt * (2 + 0.22 * countItems());
+      const canvas = document.getElementById('c');
+      const ctx = canvas.getContext('2d');
+
+      // Minimal safe canvas sizing (2:3)
+      function resize(){
+        const w = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
+        const h = Math.min(window.innerHeight, document.documentElement.clientHeight || window.innerHeight);
+        const targetH = Math.min(h, w * (3/2));
+        const targetW = targetH * (2/3);
+        canvas.style.width = Math.floor(targetW) + "px";
+        canvas.style.height = Math.floor(targetH) + "px";
+        const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        canvas.width = Math.floor(targetW * dpr);
+        canvas.height = Math.floor(targetH * dpr);
+        ctx.setTransform(dpr,0,0,dpr,0,0);
+      }
+      window.addEventListener('resize', resize, {passive:true});
+      resize();
+
+      // Minimal physics sanity check (no gameplay)
+      const engine = Engine.create();
+      engine.gravity.y = 1;
+
+      const WORLD_W=900, WORLD_H=1350;
+      const ground = Bodies.rectangle(WORLD_W/2, WORLD_H+60, WORLD_W+500, 120, {isStatic:true});
+      const box = Bodies.rectangle(WORLD_W/2, 200, 80, 80, {restitution:0.2});
+      World.add(engine.world, [ground, box]);
+
+      // Draw loop
+      let last = performance.now();
+      function tick(now){
+        const dt = Math.min(0.033, (now-last)/1000);
+        last=now;
+        Engine.update(engine, dt*1000);
+
+        // Draw background + falling box to prove JS is running
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle="#121625";
+        ctx.fillRect(0,0,canvas.clientWidth, canvas.clientHeight);
+
+        // World->screen mapping
+        const s = Math.min(canvas.clientWidth/WORLD_W, canvas.clientHeight/WORLD_H);
+        const ox = (canvas.clientWidth - WORLD_W*s)/2;
+        const oy = (canvas.clientHeight - WORLD_H*s)/2;
+
+        ctx.save();
+        ctx.translate(ox, oy);
+        ctx.scale(s, s);
+
+        // ground
+        ctx.fillStyle="rgba(255,255,255,.12)";
+        ctx.fillRect(ground.position.x - (WORLD_W+500)/2, ground.position.y - 60, WORLD_W+500, 120);
+
+        // box
+        ctx.save();
+        ctx.translate(box.position.x, box.position.y);
+        ctx.rotate(box.angle);
+        ctx.fillStyle="#d8e2ff";
+        ctx.fillRect(-40,-40,80,80);
+        ctx.restore();
+
+        ctx.restore();
+
+        requestAnimationFrame(tick);
       }
 
-      controlTray(dt);
-      Engine.update(engine, dt * 1000);
-      checkLose();
-
-      drawBackground();
-      drawArmAndHand();
-      drawBodies();
-
-      scoreEl.textContent = `Score: ${Math.floor(score)}`;
-      itemsEl.textContent = `Items: ${countItems()}/${MAX_ITEMS}`;
-
+      statusEl.textContent = "running ✅";
+      log("Started render loop. If you see a falling square, JS works.");
       requestAnimationFrame(tick);
-    }
-
-    reset();
-    requestAnimationFrame(tick);
-  })();
+    })();
   </script>
 </body>
 </html>
