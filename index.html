@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>BarBalance</title>
+  <title>BarBalance v7-stable</title>
   <style>
     :root { --bg:#0f1115; --text:#e8e8e8; --muted:#aeb6c7; }
     html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;height:100%;}
@@ -35,7 +35,7 @@
       border:1px solid rgba(255,255,255,.08);
       border-radius:14px;padding:10px 12px;font-size:13px;color:var(--muted);
       pointer-events:none;
-      max-width:min(520px, calc(100vw - 24px));
+      max-width:min(560px, calc(100vw - 24px));
       text-align:center;
       backdrop-filter: blur(8px);
       z-index:5;
@@ -68,6 +68,8 @@
       <span id="score">Score: 0</span>
       <span style="opacity:.6">•</span>
       <span id="items">Items: 0/10</span>
+      <span style="opacity:.6">•</span>
+      <span style="opacity:.85">v7</span>
     </div>
     <div class="pill">
       <span id="state">OK</span>
@@ -75,12 +77,12 @@
     </div>
   </div>
 
-  <div id="hint">Trascina a sinistra/destra per ruotare il polso. Se un oggetto esce dal vassoio: game over.</div>
+  <div id="hint">Trascina a sinistra/destra per ruotare il polso. Perdi solo quando un oggetto (dopo aver toccato il vassoio) cade davvero sotto.</div>
 
   <div id="overlay">
     <div class="card">
       <p class="title">GAME OVER</p>
-      <p class="sub" id="reason">Un oggetto è uscito dal vassoio.</p>
+      <p class="sub">Un oggetto è caduto dal vassoio.</p>
       <div class="btnRow">
         <button id="restart2">Restart</button>
       </div>
@@ -92,7 +94,6 @@
   (() => {
     const { Engine, World, Bodies, Body, Composite, Events } = Matter;
 
-    // ---- Canvas 2:3 fit ----
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
 
@@ -130,7 +131,6 @@
       return { s, ox, oy };
     }
 
-    // ---- HUD ----
     const scoreEl = document.getElementById('score');
     const itemsEl = document.getElementById('items');
     const stateEl = document.getElementById('state');
@@ -138,12 +138,10 @@
     const restartBtn2 = document.getElementById('restart2');
     const hintEl = document.getElementById('hint');
     const overlayEl = document.getElementById('overlay');
-    const reasonEl = document.getElementById('reason');
 
     function setState(s){ stateEl.textContent = s; }
     function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
 
-    // ---- Physics ----
     const engine = Engine.create({ enableSleeping: true });
     engine.gravity.y = 1.0;
     engine.positionIterations = 12;
@@ -157,7 +155,6 @@
       Bodies.rectangle(WORLD_W/2, WORLD_H + wallThickness/2, WORLD_W + 800, wallThickness, { isStatic:true })
     ]);
 
-    // ---- Tray ----
     const wrist = { x: WORLD_W*0.5, y: WORLD_H*0.68 };
     const TRAY_LEN = 640;
     const TRAY_THK = 34;
@@ -181,20 +178,11 @@
     const tray = makeTray(trayHome.x, trayHome.y);
     World.add(world, tray);
 
-    // Sensor: thin rectangle slightly ABOVE the tray plane (follows tray angle)
-    const traySensor = Bodies.rectangle(trayHome.x, trayHome.y - 22, TRAY_LEN - 20, 26, {
-      isStatic: true,
-      isSensor: true,
-      label: "traySensor"
-    });
-    World.add(world, traySensor);
-
     Body.setPosition(tray, trayHome);
     Body.setVelocity(tray, { x: 0, y: 0 });
     Body.setAngle(tray, 0);
     Body.setAngularVelocity(tray, 0);
 
-    // ---- Control ----
     let targetAngle = 0;
     const MAX_ANGLE = 0.36;
     const SENS = 2.0;
@@ -232,80 +220,51 @@
       Body.setAngularVelocity(tray, clamp(angVel, -3.2, 3.2));
       Body.setPosition(tray, trayHome);
       Body.setVelocity(tray, { x: 0, y: 0 });
-
-      // keep sensor aligned with tray
-      Body.setAngle(traySensor, tray.angle);
-      Body.setPosition(traySensor, { x: trayHome.x, y: trayHome.y - 22 });
     }
 
-    // ---- Game state ----
     const MAX_ITEMS = 10;
     let alive=true, score=0, t=0;
     let spawnEvery=2.8, nextSpawn=2.8;
 
-    const droplets=[];
-    function addDroplet(x,y,vx,vy,color){ droplets.push({x,y,vx,vy,color,life:1.0}); }
-
     function countItems(){
       const bodies = Composite.allBodies(world);
       let n=0;
-      for (const b of bodies) {
-        if (b.label==="tray" || b.label==="traySensor" || b.isStatic) continue;
-        n++;
-      }
+      for (const b of bodies) if (b.label==="obj") n++;
       return n;
     }
 
-    // ---- Objects ----
-    function makeTumbler(x,y){
-      const shell = Bodies.rectangle(x, y-16, 72, 76, { chamfer:{radius:10} });
-      const base  = Bodies.rectangle(x, y+22, 58, 20, { chamfer:{radius:8} });
-      const cup = Body.create({
-        parts:[shell, base],
-        friction: 0.95, restitution:0.01, density:0.0033, label:"tumbler"
-      });
-      cup.plugin = { liquid: { fill:0.78, slosh:0, color:"#6bdcff" } };
-      return cup;
-    }
-
-    function makeBottle(x,y){
-      const body = Bodies.rectangle(x, y+20, 60, 120, { chamfer:{radius:12} });
-      const shoulder = Bodies.rectangle(x, y-30, 52, 30, { chamfer:{radius:10} });
-      const neck = Bodies.rectangle(x, y-64, 28, 52, { chamfer:{radius:10} });
-      const cap  = Bodies.rectangle(x, y-96, 34, 16, { chamfer:{radius:6} });
-      return Body.create({
-        parts:[body, shoulder, neck, cap],
-        friction: 0.72, restitution:0.01, density:0.0040, label:"bottle"
-      });
-    }
-
-    function makeWineGlass(x,y){
-      const bowl = Bodies.rectangle(x, y-40, 82, 70, { chamfer:{radius:18} });
-      const stem = Bodies.rectangle(x, y+20, 16, 60, { chamfer:{radius:6} });
-      const base = Bodies.rectangle(x, y+66, 84, 18, { chamfer:{radius:10} });
-      const g = Body.create({
-        parts:[bowl, stem, base],
-        friction: 0.62, restitution:0.01, density:0.0030, label:"wine"
-      });
-      g.plugin = { liquid: { fill:0.62, slosh:0, color:"#ff7a59" } };
-      return g;
+    function makeObj(kind, x,y){
+      if (kind==="bottle"){
+        const body = Bodies.rectangle(x, y+26, 66, 140, { chamfer:{radius:14} });
+        const shoulder = Bodies.rectangle(x, y-26, 56, 34, { chamfer:{radius:12} });
+        const neck = Bodies.rectangle(x, y-66, 30, 56, { chamfer:{radius:10} });
+        const cap  = Bodies.rectangle(x, y-100, 36, 18, { chamfer:{radius:7} });
+        return Body.create({ parts:[body, shoulder, neck, cap], friction:0.72, restitution:0.01, density:0.0038, label:"obj" });
+      }
+      if (kind==="wine"){
+        const bowl = Bodies.rectangle(x, y-46, 88, 78, { chamfer:{radius:20} });
+        const stem = Bodies.rectangle(x, y+22, 16, 70, { chamfer:{radius:6} });
+        const base = Bodies.rectangle(x, y+74, 92, 18, { chamfer:{radius:10} });
+        return Body.create({ parts:[bowl, stem, base], friction:0.62, restitution:0.01, density:0.0029, label:"obj" });
+      }
+      // tumbler
+      const shell = Bodies.rectangle(x, y-16, 80, 88, { chamfer:{radius:12} });
+      const base  = Bodies.rectangle(x, y+26, 64, 22, { chamfer:{radius:10} });
+      return Body.create({ parts:[shell, base], friction:0.95, restitution:0.01, density:0.0032, label:"obj" });
     }
 
     function spawnOne(){
-      const x = WORLD_W * (0.24 + Math.random()*0.52);
+      const x = WORLD_W * (0.26 + Math.random()*0.48);
       const y = WORLD_H * 0.08;
-
       const r = Math.random();
-      let body;
-      if (r < 0.45) body = makeTumbler(x,y);
-      else if (r < 0.78) body = makeWineGlass(x,y);
-      else body = makeBottle(x,y);
+      const kind = (r < 0.42) ? "tumbler" : (r < 0.76) ? "wine" : "bottle";
+      const body = makeObj(kind, x,y);
 
       body.plugin = body.plugin || {};
-      body.plugin.touchedTray = false;   // becomes true on sensor collision
       body.plugin.spawnedAt = t;
+      body.plugin.touchedTray = false;
 
-      Body.setAngle(body, (Math.random()*0.14 - 0.07));
+      Body.setAngle(body, (Math.random()*0.12 - 0.06));
       World.add(world, body);
     }
 
@@ -314,145 +273,47 @@
       if (countItems() >= MAX_ITEMS) return;
       if (t < nextSpawn) return;
 
-      const difficulty = Math.min(1, t/240);
-      spawnEvery = Math.max(2.0, spawnEvery * (0.997 - 0.0010*difficulty));
       nextSpawn = t + spawnEvery;
-
       spawnOne();
     }
 
-    // Mark touchedTray using sensor collisions
     Events.on(engine, "collisionStart", (evt) => {
       for (const pair of evt.pairs) {
-        const a = pair.bodyA;
-        const b = pair.bodyB;
-
-        let obj = null;
-        if (a.label === "traySensor" && !b.isStatic && b.label !== "tray") obj = b;
-        if (b.label === "traySensor" && !a.isStatic && a.label !== "tray") obj = a;
-
-        if (obj) {
-          obj.plugin = obj.plugin || {};
-          obj.plugin.touchedTray = true;
-        }
+        const a = pair.bodyA, b = pair.bodyB;
+        let obj=null;
+        if (a.label==="tray" && b.label==="obj") obj=b;
+        else if (b.label==="tray" && a.label==="obj") obj=a;
+        if (obj) obj.plugin.touchedTray = true;
       }
     });
 
-    // ---- Liquids ----
-    function updateLiquids(dt){
-      const bodies = Composite.allBodies(world);
-      for (const b of bodies) {
-        if (!b.plugin || !b.plugin.liquid) continue;
-        const liq = b.plugin.liquid;
-
-        const targetSlosh = clamp((-b.angularVelocity*0.7) + (tray.angle*0.7), -0.75, 0.75);
-        liq.slosh += (targetSlosh - liq.slosh) * (1 - Math.exp(-7*dt));
-
-        const spillThresh = 0.52 - (liq.fill * 0.18);
-        if (Math.abs(liq.slosh) > spillThresh && liq.fill > 0.08) {
-          const spillRate = (Math.abs(liq.slosh) - spillThresh) * 0.16;
-          liq.fill = Math.max(0, liq.fill - spillRate * dt);
-
-          if (Math.random() < 0.14) {
-            addDroplet(b.position.x + (Math.random()*18-9), b.position.y - 70,
-                      (Math.random()*60-30), 60 + Math.random()*70, liq.color);
-          }
-        }
-      }
-
-      for (let i=droplets.length-1;i>=0;i--){
-        const d = droplets[i];
-        d.vy += 260*dt;
-        d.x += d.vx*dt;
-        d.y += d.vy*dt;
-        d.life -= dt;
-        if (d.life<=0 || d.y > WORLD_H+140) droplets.splice(i,1);
-      }
-    }
-
-    // ---- Robust "off tray" test using lowest vertex along tray normal ----
-    function getSupportVMin(body, cos, sin){
-      // v = -dx*sin + dy*cos in tray frame. We want the minimum v among vertices (lowest relative to tray).
-      let vmin = Infinity;
-      for (const p of body.vertices) {
-        const dx = p.x - tray.position.x;
-        const dy = p.y - tray.position.y;
-        const v = -dx * sin + dy * cos;
-        if (v < vmin) vmin = v;
-      }
-      return vmin;
-    }
-
-    function isOnTray(body){
-      body.plugin = body.plugin || {};
-
-      // Never lose during the first ~0.45s: avoids rare spawn/solver spikes
-      if ((t - (body.plugin.spawnedAt || 0)) < 0.45) return true;
-
-      // If it never touched the tray sensor:
-      // - while it's still above sensor height -> it's falling, don't judge
-      // - if it passes BELOW the tray without touching -> it missed the tray -> lose
-      if (!body.plugin.touchedTray) {
-        if (body.bounds.max.y < traySensor.position.y - 40) return true;
-        if (body.bounds.min.y > tray.position.y + 140) return false; // missed the tray entirely
-        return true;
-      }
-
-      // Now it has touched: apply footprint test
-      const cos = Math.cos(tray.angle), sin = Math.sin(tray.angle);
-
-      // Use body center for u (lateral) and lowest vertex for v (vertical relative to tray)
-      const dxC = body.position.x - tray.position.x;
-      const dyC = body.position.y - tray.position.y;
-      const u = dxC * cos + dyC * sin;
-
-      const halfLen = TRAY_LEN * 0.5;
-      const uTol = halfLen - 10;
-
-      if (u < -uTol || u > uTol) return false;
-
-      const vMin = getSupportVMin(body, cos, sin);
-      const vTolBelow = 52; // generous: prevents false lose when tray is tilted and object settles
-
-      // if the lowest point is clearly below tray plane -> fell off
-      if (vMin < -vTolBelow) return false;
-
-      return true;
-    }
-
-    function gameOver(reason){
-      alive = false;
+    function gameOver(){
+      alive=false;
       setState("GAME OVER");
-      reasonEl.textContent = reason || "Un oggetto è uscito dal vassoio.";
-      overlayEl.style.display = "flex";
+      overlayEl.style.display="flex";
     }
 
     function checkLose(){
       if (!alive) return;
+      const trayY = tray.position.y;
       const bodies = Composite.allBodies(world);
       for (const b of bodies) {
-        if (b.label==="tray" || b.label==="traySensor" || b.isStatic) continue;
-        if (!isOnTray(b)) {
-          const r = (b.plugin && b.plugin.touchedTray) ? "Un oggetto è uscito dal vassoio." : "Un oggetto ha mancato il vassoio.";
-          gameOver(r);
-          return;
-        }
+        if (b.label!=="obj") continue;
+
+        // Only start losing logic AFTER it has touched the tray at least once.
+        if (!b.plugin?.touchedTray) continue;
+
+        // If it fell clearly below tray -> lose
+        if (b.bounds.min.y > trayY + 170) { gameOver(); return; }
       }
     }
 
     function reset(){
       const bodies = Composite.allBodies(world);
-      for (const b of bodies) {
-        if (b.label==="tray" || b.label==="traySensor" || b.isStatic) continue;
-        World.remove(world, b);
-      }
-      droplets.length = 0;
+      for (const b of bodies) if (b.label==="obj") World.remove(world, b);
 
-      alive=true;
-      score=0;
-      t=0;
-      spawnEvery=2.8;
-      nextSpawn=2.8;
+      alive=true; score=0; t=0;
+      spawnEvery=2.8; nextSpawn=2.8;
       targetAngle=0;
 
       Body.setAngle(tray, 0);
@@ -460,17 +321,13 @@
       Body.setPosition(tray, trayHome);
       Body.setVelocity(tray, {x:0,y:0});
 
-      Body.setAngle(traySensor, 0);
-      Body.setPosition(traySensor, { x: trayHome.x, y: trayHome.y - 22 });
-
-      overlayEl.style.display = "none";
-      hintEl.style.opacity = 1;
+      overlayEl.style.display="none";
+      hintEl.style.opacity=1;
       setState("OK");
     }
     restartBtn.addEventListener('click', reset);
     restartBtn2.addEventListener('click', reset);
 
-    // ---- Rendering ----
     function roundRect(ctx, x, y, w, h, r){
       const rr = Math.min(r, w/2, h/2);
       ctx.beginPath();
@@ -478,27 +335,17 @@
       ctx.arcTo(x+w, y, x+w, y+h, rr);
       ctx.arcTo(x+w, y+h, x, y+h, rr);
       ctx.arcTo(x, y+h, x, y, rr);
-      ctx.arcTo(x, y, x+w, y, rr);
+      ctx.arcTo(x, y, x+w, y);
       ctx.closePath();
     }
-
     function drawBackground(){
       const { s, ox, oy } = worldToScreen();
       ctx.save();
       ctx.translate(ox, oy);
       ctx.fillStyle = "#121625";
       ctx.fillRect(0,0, WORLD_W*s, WORLD_H*s);
-
-      ctx.globalAlpha = 0.12;
-      ctx.strokeStyle = "#9aa3b2";
-      ctx.lineWidth = 1;
-      const step = 90*s;
-      for (let x=0; x<=WORLD_W*s; x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,WORLD_H*s); ctx.stroke(); }
-      for (let y=0; y<=WORLD_H*s; y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(WORLD_W*s,y); ctx.stroke(); }
-      ctx.globalAlpha = 1;
       ctx.restore();
     }
-
     function drawArmAndHand(){
       const { s, ox, oy } = worldToScreen();
       ctx.save();
@@ -529,45 +376,12 @@
 
       ctx.restore();
     }
-
     function pathVertices(verts){
       ctx.beginPath();
       ctx.moveTo(verts[0].x, verts[0].y);
       for (let i=1;i<verts.length;i++) ctx.lineTo(verts[i].x, verts[i].y);
       ctx.closePath();
     }
-
-    function drawLiquid(b){
-      const liq = b.plugin.liquid;
-      const bounds = b.bounds;
-      const h = (bounds.max.y - bounds.min.y);
-      const levelY = bounds.max.y - h * liq.fill;
-      const tilt = liq.slosh;
-      const cx = (bounds.min.x + bounds.max.x) * 0.5;
-
-      const y2 = levelY + tilt * (bounds.max.x - cx) * 0.9;
-      const y1 = levelY + tilt * (bounds.min.x - cx) * 0.9;
-
-      ctx.fillStyle = liq.color;
-      ctx.globalAlpha = 0.9;
-      ctx.beginPath();
-      ctx.moveTo(bounds.min.x - 140, bounds.max.y + 140);
-      ctx.lineTo(bounds.max.x + 140, bounds.max.y + 140);
-      ctx.lineTo(bounds.max.x + 140, y2);
-      ctx.lineTo(bounds.min.x - 140, y1);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.globalAlpha = 0.35;
-      ctx.strokeStyle = "rgba(255,255,255,.65)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(bounds.min.x - 70, y1);
-      ctx.lineTo(bounds.max.x + 70, y2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-
     function drawBodies(){
       const { s, ox, oy } = worldToScreen();
       ctx.save();
@@ -576,7 +390,6 @@
 
       const bodies = Composite.allBodies(world);
 
-      // tray
       ctx.save();
       ctx.translate(tray.position.x, tray.position.y);
       ctx.rotate(tray.angle);
@@ -595,48 +408,20 @@
       ctx.lineWidth = 3;
       roundRect(ctx, -312, -14, 624, 26, 14);
       ctx.stroke();
-
       ctx.restore();
 
-      // items
       for (const b of bodies) {
-        if (b.label==="tray" || b.label==="traySensor" || b.isStatic) continue;
-
-        let fill = "#d8e2ff";
-        if (b.label==="tumbler") fill = "#cfd8ff";
-        if (b.label==="wine") fill = "#d8e2ff";
-        if (b.label==="bottle") fill = "#7de0b8";
-
-        if (b.plugin && b.plugin.liquid) {
-          pathVertices(b.vertices);
-          ctx.save();
-          ctx.clip();
-          drawLiquid(b);
-          ctx.restore();
-        }
-
-        ctx.fillStyle = fill;
+        if (b.label!=="obj") continue;
+        ctx.fillStyle = "#d8e2ff";
         ctx.strokeStyle = "rgba(255,255,255,.18)";
         ctx.lineWidth = 2;
         pathVertices(b.vertices);
-        ctx.fill();
-        ctx.stroke();
+        ctx.fill(); ctx.stroke();
       }
-
-      // droplets
-      for (const d of droplets) {
-        ctx.globalAlpha = Math.max(0, Math.min(1, d.life));
-        ctx.fillStyle = d.color;
-        ctx.beginPath();
-        ctx.arc(d.x, d.y, 4.3, 0, Math.PI*2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
 
       ctx.restore();
     }
 
-    // ---- Main loop ----
     let last = performance.now();
     function tick(now){
       const dt = Math.min(0.033, (now - last) / 1000);
@@ -650,7 +435,6 @@
 
       controlTray(dt);
       Engine.update(engine, dt * 1000);
-      updateLiquids(dt);
       checkLose();
 
       drawBackground();
