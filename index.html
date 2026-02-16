@@ -10,20 +10,10 @@
         body { margin: 0; background-color: #222; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Press Start 2P', cursive; }
         #game-container { position: relative; width: 100vh; max-width: 100%; aspect-ratio: 2/3; background-color: #3d2e4d; border: 4px solid #000; }
         canvas { display: block; width: 100%; height: 100%; }
-        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; z-index: 10; }
-        
-        /* Start Screen con immagine corretta */
-        #start-screen { 
-            background: url('./ASSET/BarBahlance_mainScreen.png') no-repeat center center; 
-            background-size: cover; 
-            pointer-events: auto; 
-            cursor: pointer; 
-            z-index: 20; 
-        }
-
-        .blink-text { margin-top: 60%; color: #fff; text-shadow: 4px 4px 0 #000; font-size: 18px; animation: blink 1s infinite; }
+        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
+        #start-screen { background: url('./ASSET/BarBahlance_mainScreen.png') no-repeat center center; background-size: cover; pointer-events: auto; cursor: pointer; z-index: 20; }
+        .blink-text { margin-top: 60%; color: #fff; text-shadow: 4px 4px 0 #000; animation: blink 1s infinite; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-        
         #hud { display: none; justify-content: flex-start; padding-top: 20px; color: white; text-shadow: 2px 2px 0 #000; font-size: 14px; }
         #countdown { font-size: 40px; color: yellow; display: none; margin-top: 20px; }
         #game-over-screen { background: rgba(0, 0, 0, 0.85); display: none; pointer-events: auto; z-index: 30; }
@@ -51,15 +41,13 @@
     const { Engine, Render, Runner, Bodies, Composite, Events, Body, Constraint } = Matter;
 
     const LEVELS = [3, 5, 7, 10, 12];
-    let engine, render, runner, tray;
+    let engine, render, runner, tray, pivot;
     let items = [], currentLevelIdx = 0, spawnedCount = 0, isGameOver = false;
     const width = 600, height = 900;
-    let targetX = width / 2;
+    let mouseX = width / 2;
 
     function init() {
         engine = Engine.create();
-        engine.constraintIterations = 10; 
-
         const container = document.getElementById('game-container');
         render = Render.create({
             element: container,
@@ -72,13 +60,13 @@
         const inputHandler = (e) => {
             const rect = render.canvas.getBoundingClientRect();
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            targetX = (clientX - rect.left) * (width / rect.width);
+            mouseX = (clientX - rect.left) * (width / rect.width);
         };
 
-        render.canvas.addEventListener('mousemove', inputHandler);
-        render.canvas.addEventListener('touchmove', inputHandler, {passive: false});
+        window.addEventListener('mousemove', inputHandler);
+        window.addEventListener('touchmove', inputHandler, {passive: false});
 
-        Events.on(render, 'afterRender', () => { drawHand(); checkLoseCondition(); updateTrayControl(); });
+        Events.on(render, 'afterRender', () => { drawHand(); checkLoseCondition(); updateTrayPivot(); });
     }
 
     function setupLevel() {
@@ -86,21 +74,19 @@
         items = []; isGameOver = false;
         document.getElementById('hud').style.display = 'flex';
         document.getElementById('countdown').style.display = 'none';
-        document.getElementById('level-display').innerText = `LEVEL ${currentLevelIdx + 1}`;
         
-        // Vassoio fisico bilanciato (+15%)
-        tray = Bodies.rectangle(width / 2, height - 250, 410, 25, { 
-            density: 0.005, 
-            friction: 0.4, 
-            restitution: 0.1,
-            frictionAir: 0.06, 
+        // Vassoio: Massa significativa per sentire l'impatto ma libero di ruotare
+        tray = Bodies.rectangle(width / 2, height - 300, 420, 20, { 
+            friction: 0.1, density: 0.01, restitution: 0.1,
             render: { fillStyle: '#bdc3c7' }
         });
 
-        const pivot = Constraint.create({
-            pointA: { x: width / 2, y: height - 250 },
+        // Pivot mobile: Segue il mouse e tiene il vassoio
+        pivot = Constraint.create({
+            pointA: { x: width / 2, y: height - 300 },
             bodyB: tray,
-            stiffness: 1, length: 0,
+            stiffness: 1, 
+            length: 0,
             render: { visible: false }
         });
 
@@ -111,66 +97,47 @@
         startSpawning();
     }
 
-    function updateTrayControl() {
-        if (isGameOver || !tray) return;
-
-        // Calcolo inclinazione desiderata basata sul mouse
-        const mouseAngle = (targetX - width / 2) / (width / 2) * 1.3;
-        const angleError = mouseAngle - tray.angle;
-
-        // Torque di controbilanciamento con smorzamento per evitare rotazioni 360
-        const torque = angleError * 0.12; 
-        const damping = tray.angularVelocity * 0.2;
-        
-        Body.setAngularVelocity(tray, (tray.angularVelocity + torque) - damping);
-
-        // Limiti rigidi di sicurezza
-        const maxAV = 0.15;
-        if (tray.angularVelocity > maxAV) Body.setAngularVelocity(tray, maxAV);
-        if (tray.angularVelocity < -maxAV) Body.setAngularVelocity(tray, -maxAV);
-
-        const limit = 1.2;
-        if (tray.angle > limit) { Body.setAngle(tray, limit); Body.setAngularVelocity(tray, 0); }
-        if (tray.angle < -limit) { Body.setAngle(tray, -limit); Body.setAngularVelocity(tray, 0); }
+    function updateTrayPivot() {
+        if (isGameOver || !pivot) return;
+        // Sposta il punto di ancoraggio del vassoio lungo l'asse X del mouse
+        pivot.pointA.x = mouseX;
     }
 
     function spawnItem() {
         const startX = (width / 2) + (Math.random() * 340 - 170); 
         const type = Math.floor(Math.random() * 6);
         let item;
-        const props = { friction: 0.35, restitution: 0.05, density: 0.012 }; 
+        // OGGETTI PESANTI (density aumentata)
+        const props = { friction: 0.05, restitution: 0.1, density: 0.02 }; 
 
         switch(type) {
-            case 0: // Calice Vino
+            case 0: // Calice
                 item = Body.create({ parts: [
-                    Bodies.trapezoid(startX, -100, 58, 52, 0.5, { render: { fillStyle: '#900020' }}),
-                    Bodies.rectangle(startX, -65, 8, 40, { render: { fillStyle: '#fff' }}),
+                    Bodies.trapezoid(startX, -100, 60, 55, 0.5, { render: { fillStyle: '#900020' }}),
+                    Bodies.rectangle(startX, -65, 8, 45, { render: { fillStyle: '#fff' }}),
                     Bodies.rectangle(startX, -45, 45, 8, { render: { fillStyle: '#fff' }})
                 ], ...props });
                 break;
-            case 1: // Boccale Birra
+            case 1: // Boccale
                 item = Body.create({ parts: [
-                    Bodies.rectangle(startX, -50, 65, 85, { chamfer: 5, render: { fillStyle: '#f28e1c' }}),
-                    Bodies.rectangle(startX + 35, -50, 18, 50, { chamfer: 10, render: { fillStyle: '#eee' }})
-                ], ...props, density: 0.018 });
+                    Bodies.rectangle(startX, -50, 70, 90, { render: { fillStyle: '#f28e1c' }}),
+                    Bodies.rectangle(startX + 35, -50, 20, 50, { render: { fillStyle: '#eee' }})
+                ], ...props, density: 0.03 });
                 break;
             case 2: // Gin Lemon
-                item = Bodies.rectangle(startX, -50, 58, 75, { ...props, render: { fillStyle: '#ffff00' }});
+                item = Bodies.rectangle(startX, -50, 60, 80, { ...props, render: { fillStyle: '#ffff00' }});
                 break;
-            case 3: // Bottiglietta Acqua
-                item = Body.create({ parts: [
-                    Bodies.rectangle(startX, -50, 35, 80, { render: { fillStyle: '#3498db' }}),
-                    Bodies.rectangle(startX, -95, 20, 20, { render: { fillStyle: '#2980b9' }})
-                ], ...props });
+            case 3: // Acqua
+                item = Bodies.rectangle(startX, -50, 40, 90, { ...props, render: { fillStyle: '#3498db' }});
                 break;
-            case 4: // Bottiglia Birra
+            case 4: // Birra Bottiglia
                 item = Body.create({ parts: [
-                    Bodies.rectangle(startX, -50, 42, 100, { render: { fillStyle: '#3d2b1f' }}),
-                    Bodies.rectangle(startX, -115, 15, 45, { render: { fillStyle: '#3d2b1f' }})
-                ], ...props, density: 0.015 });
+                    Bodies.rectangle(startX, -50, 45, 110, { render: { fillStyle: '#3d2b1f' }}),
+                    Bodies.rectangle(startX, -120, 18, 50, { render: { fillStyle: '#3d2b1f' }})
+                ], ...props, density: 0.025 });
                 break;
             case 5: // Chupito
-                item = Bodies.rectangle(startX, -50, 32, 48, { ...props, density: 0.02, render: { fillStyle: '#e74c3c' }});
+                item = Bodies.rectangle(startX, -50, 35, 50, { ...props, density: 0.04, render: { fillStyle: '#e74c3c' }});
                 break;
         }
         items.push(item);
@@ -180,9 +147,9 @@
     function drawHand() {
         const ctx = render.context;
         ctx.beginPath();
-        ctx.moveTo(width / 2, height); 
+        ctx.moveTo(mouseX, height); 
         ctx.lineTo(tray.position.x, tray.position.y); 
-        ctx.lineWidth = 55; ctx.strokeStyle = '#e0ac69'; ctx.lineCap = 'round'; ctx.stroke();
+        ctx.lineWidth = 40; ctx.strokeStyle = '#e0ac69'; ctx.lineCap = 'round'; ctx.stroke();
     }
 
     function startSpawning() {
@@ -201,39 +168,22 @@
         let sec = 8;
         const el = document.getElementById('countdown');
         el.style.display = 'block';
-        el.innerText = sec;
         let timer = setInterval(() => {
             if (isGameOver) { clearInterval(timer); return; }
-            sec--;
-            el.innerText = sec;
-            if (sec <= 0) { 
-                clearInterval(timer); 
-                if(currentLevelIdx < LEVELS.length - 1) {
-                    currentLevelIdx++; setupLevel(); 
-                } else { alert("SEI UN MASTER DEL BAR!"); resetGame(); }
-            }
+            el.innerText = --sec;
+            if (sec <= 0) { clearInterval(timer); currentLevelIdx++; setupLevel(); }
         }, 1000);
     }
 
     function checkLoseCondition() {
         if (isGameOver) return;
         items.forEach(item => { if (item.position.y > height + 100) gameOver(); });
+        if (tray.position.y > height + 100) gameOver();
     }
 
-    function gameOver() { 
-        isGameOver = true; 
-        clearInterval(spawnInterval);
-        document.getElementById('game-over-screen').style.display = 'flex'; 
-    }
-
+    function gameOver() { isGameOver = true; document.getElementById('game-over-screen').style.display = 'flex'; }
     function startGame() { document.getElementById('start-screen').style.display = 'none'; init(); setupLevel(); }
-    
-    function resetGame() { 
-        document.getElementById('game-over-screen').style.display = 'none'; 
-        document.getElementById('start-screen').style.display = 'flex'; 
-        document.getElementById('hud').style.display = 'none';
-        currentLevelIdx = 0; 
-    }
+    function resetGame() { document.getElementById('game-over-screen').style.display = 'none'; currentLevelIdx = 0; setupLevel(); }
 </script>
 </body>
 </html>
