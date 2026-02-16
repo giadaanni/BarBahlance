@@ -1,465 +1,325 @@
-<!doctype html>
-<html lang="it">
+<!DOCTYPE html>
+<html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>BarBalance v8</title>
-  <style>
-    :root { --bg:#0f1115; --text:#e8e8e8; --muted:#aeb6c7; }
-    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;height:100%;}
-    #stage{position:fixed;inset:0;display:grid;place-items:center;overflow:hidden;}
-    canvas{display:block;touch-action:none;-webkit-user-select:none;user-select:none;border-radius:18px;background:#121625;}
-    #hud{
-      position:fixed;
-      left:max(10px, env(safe-area-inset-left));
-      right:max(10px, env(safe-area-inset-right));
-      top:max(10px, env(safe-area-inset-top));
-      display:flex;gap:10px;align-items:center;justify-content:space-between;
-      pointer-events:none;
-      z-index:5;
-    }
-    .pill{
-      pointer-events:auto;
-      background:rgba(20,24,36,.92);
-      border:1px solid rgba(255,255,255,.08);
-      border-radius:999px;padding:8px 12px;font-size:13px;
-      display:flex;gap:10px;align-items:center;white-space:nowrap;
-      backdrop-filter: blur(8px);
-    }
-    button{pointer-events:auto;border:0;border-radius:999px;padding:8px 12px;background:#2b3350;color:#fff;font-weight:700;}
-    button:active{transform:scale(.99)}
-    #hint{
-      position:fixed;left:50%;transform:translateX(-50%);
-      bottom:max(12px, env(safe-area-inset-bottom));
-      background:rgba(20,24,36,.92);
-      border:1px solid rgba(255,255,255,.08);
-      border-radius:14px;padding:10px 12px;font-size:13px;color:var(--muted);
-      pointer-events:none;
-      max-width:min(560px, calc(100vw - 24px));
-      text-align:center;
-      backdrop-filter: blur(8px);
-      z-index:5;
-    }
-    #overlay{
-      position:fixed; inset:0;
-      display:none; align-items:center; justify-content:center;
-      background:rgba(0,0,0,.35);
-      backdrop-filter: blur(6px);
-      z-index:10;
-    }
-    #overlay .card{
-      background:rgba(20,24,36,.96);
-      border:1px solid rgba(255,255,255,.10);
-      border-radius:20px;
-      padding:18px 18px 16px;
-      text-align:center;
-      width:min(330px, calc(100vw - 40px));
-    }
-    #overlay .title{font-size:22px; font-weight:800; margin:0 0 6px;}
-    #overlay .sub{font-size:13px; color:var(--muted); margin:0 0 12px;}
-    #overlay .btnRow{display:flex; gap:10px; justify-content:center;}
-  </style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Bar Bahlance</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #222;
+            overflow: hidden;
+            font-family: 'Press Start 2P', cursive;
+            touch-action: none; /* Impedisce lo scroll su mobile */
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 500px; /* Limite larghezza per desktop */
+            margin: 0 auto;
+            background: linear-gradient(to bottom, #444, #111);
+            border-left: 2px solid #555;
+            border-right: 2px solid #555;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+
+        h1 {
+            color: #FFD700;
+            font-size: 24px;
+            text-shadow: 4px 4px #000;
+            margin-bottom: 20px;
+            text-align: center;
+            line-height: 1.5;
+        }
+
+        .blink {
+            animation: blinker 1s linear infinite;
+            color: white;
+            font-size: 14px;
+            margin-top: 20px;
+        }
+
+        @keyframes blinker {
+            50% { opacity: 0; }
+        }
+
+        #overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: auto; /* Cattura i click */
+            cursor: pointer;
+        }
+
+        #score-display {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #fff;
+            font-size: 12px;
+        }
+
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
 </head>
 <body>
-  <div id="stage"><canvas id="c"></canvas></div>
 
-  <div id="hud">
-    <div class="pill">
-      <span id="score">Score: 0</span>
-      <span style="opacity:.6">•</span>
-      <span id="items">Items: 0/10</span>
-      <span style="opacity:.6">•</span>
-      <span style="opacity:.85">v8</span>
+<div id="game-container">
+    <div id="score-display">LIV: <span id="level-val">1</span></div>
+    
+    <div id="overlay">
+        <h1 id="title-text">BAR<br>BAHLANCE</h1>
+        <div class="blink" id="start-text">TAP TO START</div>
     </div>
-    <div class="pill">
-      <span id="state">OK</span>
-      <button id="restart">Restart</button>
-    </div>
-  </div>
+</div>
 
-  <div id="hint">Trascina a sinistra/destra per ruotare il polso. Perdi quando un oggetto cade sotto il vassoio.</div>
+<script>
+    // --- SETUP DEL MOTORE FISICO ---
+    const Engine = Matter.Engine,
+          Render = Matter.Render,
+          Runner = Matter.Runner,
+          Bodies = Matter.Bodies,
+          Composite = Matter.Composite,
+          Constraint = Matter.Constraint,
+          Events = Matter.Events,
+          Body = Matter.Body,
+          Vector = Matter.Vector;
 
-  <div id="overlay">
-    <div class="card">
-      <p class="title">GAME OVER</p>
-      <p class="sub">Un oggetto è caduto dal vassoio.</p>
-      <div class="btnRow">
-        <button id="restart2">Restart</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
-  <script>
-  (() => {
-    const { Engine, World, Bodies, Body, Composite, Events } = Matter;
-
-    // ---------- Canvas 2:3 fit ----------
-    const canvas = document.getElementById('c');
-    const ctx = canvas.getContext('2d');
-
-    function getViewport() {
-      const h = Math.min(window.innerHeight, document.documentElement.clientHeight || window.innerHeight);
-      const w = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
-      return { w, h };
-    }
-
-    const WORLD_W = 900, WORLD_H = 1350;
-    let cw=0, ch=0, dpr=1;
-
-    function resizeCanvas() {
-      const { w, h } = getViewport();
-      dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-      const targetH = Math.min(h, w * (3/2));
-      const targetW = targetH * (2/3);
-      cw = Math.floor(targetW);
-      ch = Math.floor(targetH);
-      canvas.style.width = cw + "px";
-      canvas.style.height = ch + "px";
-      canvas.width = Math.floor(cw * dpr);
-      canvas.height = Math.floor(ch * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-    window.addEventListener('resize', resizeCanvas, { passive:true });
-    resizeCanvas();
-
-    function worldToScreen() {
-      const s = Math.min(cw / WORLD_W, ch / WORLD_H);
-      const ox = (cw - WORLD_W * s) / 2;
-      const oy = (ch - WORLD_H * s) / 2;
-      return { s, ox, oy };
-    }
-
-    // ---------- HUD ----------
-    const scoreEl = document.getElementById('score');
-    const itemsEl = document.getElementById('items');
-    const stateEl = document.getElementById('state');
-    const restartBtn = document.getElementById('restart');
-    const restartBtn2 = document.getElementById('restart2');
-    const overlayEl = document.getElementById('overlay');
-
-    function setState(s){ stateEl.textContent = s; }
-    function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-
-    // ---------- Physics ----------
-    const engine = Engine.create({ enableSleeping:true });
-    engine.gravity.y = 1.0;
-    engine.positionIterations = 12;
-    engine.velocityIterations = 10;
+    // Creazione motore
+    const engine = Engine.create();
     const world = engine.world;
 
-    // Side walls + floor (hidden)
-    const wallThickness = 200;
-    World.add(world, [
-      Bodies.rectangle(-wallThickness/2, WORLD_H/2, wallThickness, WORLD_H+1000, { isStatic:true }),
-      Bodies.rectangle(WORLD_W+wallThickness/2, WORLD_H/2, wallThickness, WORLD_H+1000, { isStatic:true }),
-      Bodies.rectangle(WORLD_W/2, WORLD_H+70, WORLD_W+1000, 140, { isStatic:true })
-    ]);
+    // Configurazione container
+    const container = document.getElementById('game-container');
+    const width = container.clientWidth;
+    const height = container.clientHeight;
 
-    // ---------- Tray & hand ----------
-    const wrist = { x: WORLD_W*0.5, y: WORLD_H*0.68 };
-    const TRAY_LEN = 640;
-    const TRAY_THK = 34;
-
-    function makeTray(x,y){
-      const plank = Bodies.rectangle(x, y, TRAY_LEN, TRAY_THK, { chamfer:{ radius:12 } });
-      const lipL  = Bodies.rectangle(x - TRAY_LEN/2 + 14, y - 10, 22, 30, { chamfer:{ radius:6 } });
-      const lipR  = Bodies.rectangle(x + TRAY_LEN/2 - 14, y - 10, 22, 30, { chamfer:{ radius:6 } });
-      return Body.create({
-        parts: [plank, lipL, lipR],
-        friction: 1.0,
-        frictionStatic: 1.25,
-        restitution: 0.02,
-        density: 0.0042,
-        inertia: Infinity,
-        label: "tray"
-      });
-    }
-
-    const trayHome = { x: wrist.x, y: wrist.y - 110 };
-    const tray = makeTray(trayHome.x, trayHome.y);
-    World.add(world, tray);
-
-    Body.setPosition(tray, trayHome);
-    Body.setVelocity(tray, { x:0, y:0 });
-    Body.setAngle(tray, 0);
-    Body.setAngularVelocity(tray, 0);
-
-    // Control: drag left/right -> angle
-    let targetAngle = 0;
-    const MAX_ANGLE = 0.34;
-    const SENS = 2.0;
-    let dragging=false, lastX=0;
-
-    function getPointerX(e) {
-      const rect = canvas.getBoundingClientRect();
-      const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
-      return (clientX - rect.left) / rect.width;
-    }
-
-    function onDown(e){ dragging=true; lastX=getPointerX(e); }
-    function onMove(e){
-      if(!dragging) return;
-      const x=getPointerX(e);
-      const dx=x-lastX; lastX=x;
-      targetAngle = clamp(targetAngle + dx*SENS, -MAX_ANGLE, +MAX_ANGLE);
-    }
-    function onUp(){ dragging=false; }
-
-    canvas.addEventListener('pointerdown', (e)=>{ canvas.setPointerCapture(e.pointerId); onDown(e); }, { passive:true });
-    canvas.addEventListener('pointermove', (e)=>onMove(e), { passive:true });
-    canvas.addEventListener('pointerup', onUp, { passive:true });
-    canvas.addEventListener('pointercancel', onUp, { passive:true });
-    canvas.addEventListener('touchstart', onDown, { passive:true });
-    canvas.addEventListener('touchmove', onMove, { passive:true });
-    canvas.addEventListener('touchend', onUp, { passive:true });
-
-    function controlTray(dt){
-      const follow = 1 - Math.exp(-18 * dt);
-      const newAngle = tray.angle + (targetAngle - tray.angle) * follow;
-      const angVel = (newAngle - tray.angle) / dt;
-
-      Body.setAngle(tray, newAngle);
-      Body.setAngularVelocity(tray, clamp(angVel, -3.0, 3.0));
-      Body.setPosition(tray, trayHome);
-      Body.setVelocity(tray, { x:0, y:0 });
-    }
-
-    // ---------- Game ----------
-    const MAX_ITEMS = 10;
-    let alive=true, score=0, t=0;
-    let spawnEvery=2.8, nextSpawn=2.0;
-
-    function countItems(){
-      const bodies = Composite.allBodies(world);
-      let n=0;
-      for (const b of bodies) if (b.label==="obj") n++;
-      return n;
-    }
-
-    function makeObj(kind, x,y){
-      if (kind==="bottle"){
-        const body = Bodies.rectangle(x, y+26, 66, 140, { chamfer:{radius:14} });
-        const shoulder = Bodies.rectangle(x, y-26, 56, 34, { chamfer:{radius:12} });
-        const neck = Bodies.rectangle(x, y-66, 30, 56, { chamfer:{radius:10} });
-        const cap  = Bodies.rectangle(x, y-100, 36, 18, { chamfer:{radius:7} });
-        return Body.create({ parts:[body, shoulder, neck, cap], friction:0.72, restitution:0.01, density:0.0038, label:"obj" });
-      }
-      if (kind==="wine"){
-        const bowl = Bodies.rectangle(x, y-46, 88, 78, { chamfer:{radius:20} });
-        const stem = Bodies.rectangle(x, y+22, 16, 70, { chamfer:{radius:6} });
-        const base = Bodies.rectangle(x, y+74, 92, 18, { chamfer:{radius:10} });
-        return Body.create({ parts:[bowl, stem, base], friction:0.62, restitution:0.01, density:0.0029, label:"obj" });
-      }
-      // tumbler
-      const shell = Bodies.rectangle(x, y-16, 80, 88, { chamfer:{radius:12} });
-      const base  = Bodies.rectangle(x, y+26, 64, 22, { chamfer:{radius:10} });
-      return Body.create({ parts:[shell, base], friction:0.95, restitution:0.01, density:0.0032, label:"obj" });
-    }
-
-    function spawnOne(){
-      const x = WORLD_W * (0.26 + Math.random()*0.48);
-      const y = WORLD_H * 0.08;
-      const r = Math.random();
-      const kind = (r < 0.42) ? "tumbler" : (r < 0.76) ? "wine" : "bottle";
-      const body = makeObj(kind, x, y);
-
-      body.plugin = body.plugin || {};
-      body.plugin.touchedTray = false;
-      body.plugin.spawnedAt = t;
-
-      Body.setAngle(body, (Math.random()*0.12 - 0.06));
-      World.add(world, body);
-    }
-
-    function maybeSpawn(){
-      if (!alive) return;
-      if (countItems() >= MAX_ITEMS) return;
-      if (t < nextSpawn) return;
-
-      nextSpawn = t + spawnEvery;
-      spawnOne();
-    }
-
-    // Mark real contact with tray
-    Events.on(engine, "collisionStart", (evt) => {
-      for (const pair of evt.pairs) {
-        const a = pair.bodyA, b = pair.bodyB;
-        let obj=null;
-        if (a.label==="tray" && b.label==="obj") obj=b;
-        else if (b.label==="tray" && a.label==="obj") obj=a;
-        if (obj) obj.plugin.touchedTray = true;
-      }
+    // Renderer (Visualizzazione)
+    const render = Render.create({
+        element: container,
+        engine: engine,
+        options: {
+            width: width,
+            height: height,
+            wireframes: false, // Mettiamo false per vedere i colori
+            background: 'transparent'
+        }
     });
 
-    function gameOver(){
-      alive=false;
-      setState("GAME OVER");
-      overlayEl.style.display="flex";
+    // Variabili di Gioco
+    let tray;
+    let handPivot;
+    let gameActive = false;
+    let level = 1;
+    let objectInterval;
+    let winTimeout;
+    const objects = []; // Teniamo traccia degli oggetti sul vassoio
+
+    // --- FUNZIONI DI CREAZIONE ---
+
+    // 1. Il Vassoio e la Mano
+    function createTraySystem() {
+        const trayWidth = width * 0.7;
+        const trayHeight = 15;
+        
+        // Il vassoio (rettangolo)
+        tray = Bodies.rectangle(width / 2, height - 150, trayWidth, trayHeight, { 
+            friction: 0.8, // Molto attrito per non far scivolare subito tutto
+            density: 0.005,
+            render: { fillStyle: '#8B4513' }, // Colore marrone
+            chamfer: { radius: 5 } // Angoli arrotondati
+        });
+
+        // La "Mano" (Punto fisso invisibile al centro)
+        const pivotPoint = { x: width / 2, y: height - 120 };
+        
+        // Creiamo un vincolo "Revolute" (cerniera)
+        handPivot = Constraint.create({
+            pointA: pivotPoint,
+            bodyB: tray,
+            pointB: { x: 0, y: 30 }, // Punto di aggancio sul vassoio (spostato in basso per stabilità)
+            stiffness: 1,
+            length: 0,
+            render: { visible: true, lineWidth: 5, strokeStyle: '#FFCCAA' } // Colore pelle stilizzato
+        });
+
+        Composite.add(world, [tray, handPivot]);
     }
 
-    function checkLose(){
-      if (!alive) return;
-      const trayY = tray.position.y;
-      const bodies = Composite.allBodies(world);
-      for (const b of bodies) {
-        if (b.label!=="obj") continue;
+    // 2. Generatore di Oggetti (Bicchieri, Bottiglie)
+    function spawnObject() {
+        if (!gameActive) return;
 
-        // Only lose after it touched tray at least once
-        if (!b.plugin?.touchedTray) continue;
+        const types = ['beer', 'wine', 'shot'];
+        const type = types[Math.floor(Math.random() * types.length)];
+        
+        let newBody;
+        const spawnX = (width / 2) + (Math.random() * 40 - 20); // Leggera variazione casuale X
+        const spawnY = -50; // Sopra lo schermo
 
-        // Fell clearly below tray -> lose
-        if (b.bounds.min.y > trayY + 170) { gameOver(); return; }
-      }
+        if (type === 'beer') {
+            // Boccale (Rettangolo tozzo)
+            newBody = Bodies.rectangle(spawnX, spawnY, 40, 50, {
+                render: { fillStyle: '#F28E1C' }, // Color Birra
+                density: 0.002,
+                friction: 0.5
+            });
+        } else if (type === 'wine') {
+            // Calice (Trapezio invertito)
+            newBody = Bodies.trapezoid(spawnX, spawnY, 30, 40, 1, {
+                render: { fillStyle: '#722F37' }, // Color Vino
+                density: 0.001,
+                friction: 0.3,
+                angle: Math.PI // Girato
+            });
+        } else {
+            // Shot (Piccolo)
+            newBody = Bodies.rectangle(spawnX, spawnY, 20, 25, {
+                render: { fillStyle: '#ddd' },
+                density: 0.001
+            });
+        }
+
+        objects.push(newBody);
+        Composite.add(world, newBody);
     }
 
-    function reset(){
-      const bodies = Composite.allBodies(world);
-      for (const b of bodies) if (b.label==="obj") World.remove(world, b);
+    // --- CONTROLLI ---
+    // Logica: Toccare a destra inclina a destra (applica forza), sinistra inclina a sinistra
+    let isTouching = false;
+    let touchSide = 0; // -1 sinistra, 1 destra
 
-      alive=true; score=0; t=0;
-      spawnEvery=2.8; nextSpawn=2.0;
-      targetAngle=0;
-
-      Body.setAngle(tray, 0);
-      Body.setAngularVelocity(tray, 0);
-      Body.setPosition(tray, trayHome);
-      Body.setVelocity(tray, {x:0,y:0});
-
-      overlayEl.style.display="none";
-      setState("OK");
-    }
-    restartBtn.addEventListener('click', reset);
-    restartBtn2.addEventListener('click', reset);
-
-    // ---------- Rendering ----------
-    function roundRect(ctx, x, y, w, h, r){
-      const rr = Math.min(r, w/2, h/2);
-      ctx.beginPath();
-      ctx.moveTo(x+rr, y);
-      ctx.arcTo(x+w, y, x+w, y+h, rr);
-      ctx.arcTo(x+w, y+h, x, y+h, rr);
-      ctx.arcTo(x, y+h, x, y, rr);
-      ctx.arcTo(x, y, x+w, y);
-      ctx.closePath();
-    }
-    function pathVertices(verts){
-      ctx.beginPath();
-      ctx.moveTo(verts[0].x, verts[0].y);
-      for (let i=1;i<verts.length;i++) ctx.lineTo(verts[i].x, verts[i].y);
-      ctx.closePath();
+    function handleInput(x) {
+        if (!gameActive) return;
+        if (x < width / 2) touchSide = -1;
+        else touchSide = 1;
+        isTouching = true;
     }
 
-    function drawBackground(){
-      const { s, ox, oy } = worldToScreen();
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.fillStyle = "#121625";
-      ctx.fillRect(0,0, WORLD_W*s, WORLD_H*s);
-      ctx.restore();
+    window.addEventListener('mousedown', (e) => handleInput(e.clientX));
+    window.addEventListener('touchstart', (e) => handleInput(e.touches[0].clientX));
+    
+    window.addEventListener('mouseup', () => { isTouching = false; });
+    window.addEventListener('touchend', () => { isTouching = false; });
+
+
+    // --- GAME LOOP LOGIC ---
+    function startGame() {
+        // Reset
+        Composite.clear(world);
+        Engine.clear(engine);
+        objects.length = 0;
+        level = 1;
+        document.getElementById('level-val').innerText = level;
+        
+        createTraySystem();
+        
+        // Muri invisibili laterali per non far cadere il vassoio fuori dal mondo (opzionale)
+        // Per ora lasciamo libero
+
+        gameActive = true;
+        document.getElementById('overlay').style.display = 'none';
+
+        // Loop di spawn oggetti (base)
+        startLevel(1);
     }
 
-    function drawArmAndHand(){
-      const { s, ox, oy } = worldToScreen();
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.scale(s, s);
+    function startLevel(lvl) {
+        let itemsToSpawn = 2 + lvl; // Livello 1: 3 oggetti, Livello 2: 4 oggetti...
+        let spawned = 0;
 
-      // forearm
-      ctx.save();
-      ctx.translate(wrist.x, wrist.y + 250);
-      ctx.rotate(-0.15);
-      ctx.fillStyle = "#b28b68";
-      roundRect(ctx, -120, -40, 240, 580, 90);
-      ctx.fill();
-      ctx.restore();
-
-      // hand (rotates with tray a bit)
-      ctx.save();
-      ctx.translate(wrist.x, wrist.y + 50);
-      ctx.rotate(tray.angle * 0.95);
-      ctx.fillStyle = "#caa07a";
-      roundRect(ctx, -175, -52, 350, 104, 52);
-      ctx.fill();
-      ctx.fillStyle = "#d3ac86";
-      for (let i=0;i<4;i++){
-        roundRect(ctx, -155 + i*78, -102, 62, 58, 22);
-        ctx.fill();
-      }
-      ctx.restore();
-
-      ctx.restore();
+        objectInterval = setInterval(() => {
+            if (!gameActive) { clearInterval(objectInterval); return; }
+            spawnObject();
+            spawned++;
+            if (spawned >= itemsToSpawn) {
+                clearInterval(objectInterval);
+                checkWinCondition();
+            }
+        }, 2000); // Un oggetto ogni 2 secondi
     }
 
-    function drawBodies(){
-      const { s, ox, oy } = worldToScreen();
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.scale(s, s);
-
-      // tray
-      ctx.save();
-      ctx.translate(tray.position.x, tray.position.y);
-      ctx.rotate(tray.angle);
-      ctx.globalAlpha = 0.25;
-      ctx.fillStyle = "#000";
-      roundRect(ctx, -330, -10, 660, 38, 18);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-
-      ctx.fillStyle = "#3b4258";
-      roundRect(ctx, -320, -18, 640, 34, 16);
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,.18)";
-      ctx.lineWidth = 3;
-      roundRect(ctx, -312, -14, 624, 26, 14);
-      ctx.stroke();
-      ctx.restore();
-
-      // items
-      const bodies = Composite.allBodies(world);
-      for (const b of bodies) {
-        if (b.label!=="obj") continue;
-        ctx.fillStyle = "#d8e2ff";
-        ctx.strokeStyle = "rgba(255,255,255,.18)";
-        ctx.lineWidth = 2;
-        pathVertices(b.vertices);
-        ctx.fill();
-        ctx.stroke();
-      }
-
-      ctx.restore();
+    function checkWinCondition() {
+        // Dopo aver lanciato tutti gli oggetti, aspetta 5 secondi
+        winTimeout = setTimeout(() => {
+            if (gameActive) {
+                level++;
+                document.getElementById('level-val').innerText = level;
+                // Pulisce un po' oggetti vecchi o continua? Per ora continua (accumulo)
+                startLevel(level);
+            }
+        }, 5000);
     }
 
-    // ---------- Loop ----------
-    let last = performance.now();
-    function tick(now){
-      const dt = Math.min(0.033, (now - last) / 1000);
-      last = now;
-
-      if (alive) {
-        t += dt;
-        maybeSpawn();
-        score += dt * (2 + 0.22 * countItems());
-      }
-
-      controlTray(dt);
-      Engine.update(engine, dt * 1000);
-      checkLose();
-
-      drawBackground();
-      drawArmAndHand();
-      drawBodies();
-
-      scoreEl.textContent = `Score: ${Math.floor(score)}`;
-      itemsEl.textContent = `Items: ${countItems()}/${MAX_ITEMS}`;
-
-      requestAnimationFrame(tick);
+    function gameOver() {
+        gameActive = false;
+        clearInterval(objectInterval);
+        clearTimeout(winTimeout);
+        document.getElementById('title-text').innerHTML = "GAME OVER";
+        document.getElementById('start-text').innerText = "TAP TO RESTART";
+        document.getElementById('overlay').style.display = 'flex';
     }
 
-    reset();
-    requestAnimationFrame(tick);
-  })();
-  </script>
+    // Loop di aggiornamento (update ogni frame)
+    Events.on(engine, 'beforeUpdate', function(event) {
+        if (!gameActive) return;
+
+        // 1. Gestione Input (Stabilizzazione attiva vs Inclinazione utente)
+        // Applichiamo una forza rotazionale (Torque) al vassoio
+        if (isTouching) {
+            Body.setAngularVelocity(tray, tray.angularVelocity + (0.002 * touchSide));
+        } else {
+            // Auto-stabilizzazione leggera (smorzamento)
+            Body.setAngularVelocity(tray, tray.angularVelocity * 0.95);
+        }
+
+        // Limitiamo l'angolo massimo del vassoio per non farlo ribaltare di 360 gradi
+        const maxAngle = 0.5; // circa 30 gradi
+        if (tray.angle > maxAngle) Body.setAngle(tray, maxAngle);
+        if (tray.angle < -maxAngle) Body.setAngle(tray, -maxAngle);
+
+        // 2. Controllo Sconfitta
+        // Se un oggetto cade troppo in basso
+        objects.forEach(obj => {
+            if (obj.position.y > height + 50) {
+                gameOver();
+            }
+        });
+    });
+
+    // Avvio iniziale al click
+    document.getElementById('overlay').addEventListener('click', () => {
+        if (!gameActive) startGame();
+    });
+
+    // Avvia renderer e runner
+    Render.run(render);
+    const runner = Runner.create();
+    Runner.run(runner, engine);
+
+</script>
+
 </body>
 </html>
