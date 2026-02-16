@@ -22,10 +22,10 @@
 
         #game-container {
             position: relative;
-            width: 100vh; /* Mantiene aspect ratio basato sull'altezza */
+            width: 100vh;
             max-width: 100%;
             aspect-ratio: 2/3;
-            background-color: #4a3b59; /* Colore sfondo bar */
+            background-color: #4a3b59;
             overflow: hidden;
             border: 4px solid #000;
             box-shadow: 0 0 20px rgba(0,0,0,0.5);
@@ -37,7 +37,6 @@
             height: 100%;
         }
 
-        /* Schermate UI (Start, Game Over, HUD) */
         .ui-layer {
             position: absolute;
             top: 0;
@@ -53,15 +52,16 @@
             z-index: 10;
         }
 
+        /* MODIFICA: Percorso aggiornato a ASSET e nome file PNG */
         #start-screen {
-            background: url('./assets/title_screen.jpg') no-repeat center center;
+            background: url('./ASSET/BarBahlance_mainScreen.png') no-repeat center center;
             background-size: cover;
-            pointer-events: auto; /* Cliccabile */
+            pointer-events: auto;
             cursor: pointer;
         }
 
         .blink-text {
-            margin-top: 60%; /* Sposta la scritta in basso */
+            margin-top: 60%;
             color: #fff;
             text-shadow: 4px 4px 0 #000;
             font-size: 20px;
@@ -128,43 +128,32 @@
 </div>
 
 <script>
-    // --- CONFIGURAZIONE ---
     const Engine = Matter.Engine,
           Render = Matter.Render,
           Runner = Matter.Runner,
           Bodies = Matter.Bodies,
           Composite = Matter.Composite,
           Events = Matter.Events,
-          Body = Matter.Body,
-          Vector = Matter.Vector;
+          Body = Matter.Body;
 
-    // Livelli: numero di oggetti per livello
     const LEVELS = [3, 5, 7, 10, 12];
     
-    // Variabili di Stato
     let engine, render, runner;
-    let tray, hand;
+    let tray;
     let items = [];
     let currentLevelIdx = 0;
     let itemsToSpawn = 0;
     let spawnedCount = 0;
     let isGameOver = false;
-    let isCountdownActive = false;
     let countdownTimer = null;
     let spawnInterval = null;
     
-    // Dimensioni logiche (canvas)
     const width = 600;
     const height = 900;
 
-    // --- SETUP INIZIALE ---
     function init() {
-        // Crea Engine
         engine = Engine.create();
-        
-        // Crea Renderer
         const container = document.getElementById('game-container');
-        // Rimuovi canvas precedenti se esistono
         const oldCanvas = container.querySelector('canvas');
         if(oldCanvas) oldCanvas.remove();
 
@@ -174,110 +163,79 @@
             options: {
                 width: width,
                 height: height,
-                wireframes: false, // Metti a true per vedere le hitbox
+                wireframes: false, 
                 background: 'transparent'
             }
         });
 
-        // Crea Runner
         runner = Runner.create();
         
-        // Setup Input (Mouse/Touch)
         render.canvas.addEventListener('mousemove', handleInput);
         render.canvas.addEventListener('touchmove', handleInput, {passive: false});
 
-        // Loop personalizzato per disegnare la "Mano" e controllare il gioco
         Events.on(render, 'afterRender', function() {
             drawHand();
             checkLoseCondition();
         });
     }
 
-    // --- CREAZIONE MONDO DI GIOCO ---
     function setupLevel() {
         Composite.clear(engine.world);
         Engine.clear(engine);
         items = [];
         isGameOver = false;
-        isCountdownActive = false;
         
-        // Aggiorna UI
         document.getElementById('level-display').innerText = `LEVEL ${currentLevelIdx + 1}`;
         document.getElementById('items-display').innerText = `Next: ${LEVELS[currentLevelIdx]}`;
         document.getElementById('countdown').style.display = 'none';
         
-        // Crea il vassoio (Tray)
-        // Posizionato al centro in basso
         tray = Bodies.rectangle(width / 2, height - 200, 350, 20, { 
-            isStatic: true, // Lo muoviamo manualmente, ma è "statico" per la fisica
+            isStatic: true, 
             chamfer: { radius: 5 },
             render: { fillStyle: '#C0C0C0' },
-            friction: 0.8 // Alta frizione per non far scivolare subito
+            friction: 0.1, 
+            frictionStatic: 0.1
         });
 
         Composite.add(engine.world, tray);
 
-        // Avvia il render e il runner
         Render.run(render);
         Runner.run(runner, engine);
 
-        // Avvia lo spawn degli oggetti
         itemsToSpawn = LEVELS[currentLevelIdx];
         spawnedCount = 0;
-        
         startSpawning();
     }
 
-    // --- CONTROLLI ---
     function handleInput(e) {
         if (isGameOver) return;
         e.preventDefault();
-
-        let clientX;
-        if(e.type === 'touchmove') {
-            clientX = e.touches[0].clientX;
-        } else {
-            clientX = e.clientX;
-        }
-
-        // Calcola la posizione relativa al canvas
+        let clientX = (e.type === 'touchmove') ? e.touches[0].clientX : e.clientX;
         const rect = render.canvas.getBoundingClientRect();
         const scaleX = width / rect.width;
         const x = (clientX - rect.left) * scaleX;
 
-        // Mappa la X del mouse all'angolo (-140 a 140 gradi sono TROPPI per giocare bene, 
-        // ho limitato a +/- 45 gradi per giocabilità, ma il codice supporta 140 se cambi i numeri)
-        // 140 gradi = 2.44 radianti. È quasi capovolto. 
-        // Imposto un massimo di 60 gradi (1.04 rad) per evitare frustrazione, come richiesto.
-        
         const maxAngle = 60 * (Math.PI / 180); 
-        const normalizedX = (x - width / 2) / (width / 2); // da -1 a 1
-        let targetAngle = normalizedX * maxAngle;
+        const normalizedX = (x - width / 2) / (width / 2); 
+        let targetAngle = Math.max(Math.min(normalizedX * maxAngle, maxAngle), -maxAngle);
 
-        // Smooth movement (Lerp) per evitare scatti bruschi che lanciano via tutto
         const currentAngle = tray.angle;
-        const smoothFactor = 0.1; // Più basso = più ritardo/peso
+        const smoothFactor = 0.1; 
         const newAngle = currentAngle + (targetAngle - currentAngle) * smoothFactor;
-
         Body.setAngle(tray, newAngle);
     }
 
-    // --- DISEGNO DELLA MANO ---
     function drawHand() {
         const ctx = render.context;
         const trayPos = tray.position;
-        
         ctx.beginPath();
-        ctx.moveTo(width / 2, height); // Base della mano (fondo schermo)
-        // Punto di attacco al vassoio (che ruota)
+        ctx.moveTo(width / 2, height); 
         ctx.lineTo(trayPos.x, trayPos.y); 
-        
         ctx.lineWidth = 40;
-        ctx.strokeStyle = '#e0ac69'; // Colore pelle
+        ctx.strokeStyle = '#e0ac69'; 
         ctx.lineCap = 'round';
         ctx.stroke();
         
-        // Polsino camicia
         ctx.beginPath();
         ctx.moveTo(width / 2, height);
         ctx.lineTo(width/2, height - 100);
@@ -286,111 +244,79 @@
         ctx.stroke();
     }
 
-    // --- SPAWN OGGETTI ---
     function startSpawning() {
-        let spawnDelay = 2000; // Tempo tra oggetti
-        
         spawnInterval = setInterval(() => {
-            if (isGameOver) {
-                clearInterval(spawnInterval);
-                return;
-            }
+            if (isGameOver) { clearInterval(spawnInterval); return; }
             if (spawnedCount >= itemsToSpawn) {
                 clearInterval(spawnInterval);
-                checkWinCondition(); // Inizia monitoraggio vittoria
+                checkWinCondition(); 
                 return;
             }
-
             spawnItem();
             spawnedCount++;
             document.getElementById('items-display').innerText = `Items: ${spawnedCount}/${itemsToSpawn}`;
-            
-        }, spawnDelay);
+        }, 2000);
     }
 
     function spawnItem() {
-        // Tipi di oggetti con proprietà fisiche diverse
-        const types = [
-            // Boccale Birra (Stabile, pesante)
-            { w: 50, h: 70, color: '#f28e1c', shape: 'rect', density: 0.002 },
-            // Bottiglia (Alta, stretta, instabile)
-            { w: 25, h: 90, color: '#2e8b57', shape: 'rect', density: 0.0015 },
-            // Calice Vino (Triangolo rovesciato, molto instabile)
-            { w: 40, h: 50, color: '#900020', shape: 'polygon', sides: 3, density: 0.001 },
-            // Shot (Piccolo, leggero)
-            { w: 20, h: 25, color: '#ADD8E6', shape: 'rect', density: 0.001 },
-            // Drink (Quadrato standard)
-            { w: 40, h: 50, color: '#ff69b4', shape: 'rect', density: 0.0015 }
-        ];
-
-        const type = types[Math.floor(Math.random() * types.length)];
-        const startX = (width / 2) + (Math.random() * 40 - 20); // Leggera variazione casuale X
-
+        const startX = (width / 2) + (Math.random() * 300 - 150); 
+        const itemType = Math.floor(Math.random() * 5);
         let item;
-        if (type.shape === 'rect') {
-            item = Bodies.rectangle(startX, -50, type.w, type.h, {
-                render: { fillStyle: type.color, strokeStyle: 'black', lineWidth: 2 },
-                density: type.density,
-                friction: 0.5,
-                restitution: 0.1 // Poco rimbalzo
-            });
-        } else if (type.shape === 'polygon') {
-            item = Bodies.polygon(startX, -50, type.sides, type.w / 2, {
-                render: { fillStyle: type.color, strokeStyle: 'black', lineWidth: 2 },
-                density: type.density,
-                friction: 0.5,
-                restitution: 0.1,
-                angle: Math.PI // Ruota triangolo per farlo sembrare un calice (punta giù)
-            });
-        }
+        const commonProps = { friction: 0.09, frictionStatic: 0.09, restitution: 0.2, render: { strokeStyle: '#000', lineWidth: 2 } };
 
+        switch(itemType) {
+            case 0: // Boccale
+                const mugBody = Bodies.rectangle(startX, -50, 50, 70, { render: { fillStyle: '#f28e1c' } });
+                const mugHandle = Bodies.rectangle(startX + 30, -50, 15, 40, { render: { fillStyle: '#f28e1c' } });
+                item = Body.create({ parts: [mugBody, mugHandle], density: 0.005, ...commonProps });
+                break;
+            case 1: // Bottiglia
+                const botNeck = Bodies.rectangle(startX, -90, 15, 40, { render: { fillStyle: '#2e8b57' } });
+                const botBody = Bodies.rectangle(startX, -50, 30, 60, { render: { fillStyle: '#2e8b57' } });
+                item = Body.create({ parts: [botNeck, botBody], density: 0.004, ...commonProps });
+                break;
+            case 2: // Calice
+                const cup = Bodies.polygon(startX, -70, 3, 25, { angle: Math.PI, render: { fillStyle: '#900020' } });
+                const stem = Bodies.rectangle(startX, -45, 5, 25, { render: { fillStyle: '#fff' } });
+                const base = Bodies.rectangle(startX, -30, 25, 5, { render: { fillStyle: '#fff' } });
+                item = Body.create({ parts: [cup, stem, base], density: 0.003, ...commonProps });
+                break;
+            case 3: // Shot
+                item = Bodies.rectangle(startX, -50, 25, 30, { render: { fillStyle: '#ADD8E6' }, density: 0.004, ...commonProps });
+                break;
+            case 4: // Drink
+                item = Bodies.rectangle(startX, -50, 45, 50, { render: { fillStyle: '#ff69b4' }, density: 0.004, ...commonProps });
+                break;
+        }
         items.push(item);
         Composite.add(engine.world, item);
     }
 
-    // --- CONDIZIONI VITTORIA/SCONFITTA ---
     function checkLoseCondition() {
         if (isGameOver) return;
-
-        items.forEach(item => {
-            // Se un oggetto scende sotto il fondo del canvas
-            if (item.position.y > height + 50) {
-                gameOver();
-            }
-        });
+        items.forEach(item => { if (item.position.y > height + 50) gameOver(); });
     }
 
     function checkWinCondition() {
-        // Aspetta che tutti siano atterrati (approssimativamente)
-        // Avvia countdown
-        isCountdownActive = true;
         let timeLeft = 8;
         const countEl = document.getElementById('countdown');
         countEl.style.display = 'block';
         countEl.innerText = timeLeft;
-
         countdownTimer = setInterval(() => {
-            if (isGameOver) {
-                clearInterval(countdownTimer);
-                return;
-            }
+            if (isGameOver) { clearInterval(countdownTimer); return; }
             timeLeft--;
             countEl.innerText = timeLeft;
-
-            if (timeLeft <= 0) {
-                clearInterval(countdownTimer);
-                levelComplete();
-            }
+            if (timeLeft <= 0) { clearInterval(countdownTimer); levelComplete(); }
         }, 1000);
     }
 
     function levelComplete() {
         if (currentLevelIdx < LEVELS.length - 1) {
             currentLevelIdx++;
-            alert("LEVEL COMPLETE! Get ready for Level " + (currentLevelIdx + 1));
-            setupLevel(); // Reset pulito per nuovo livello
+            alert("LEVEL COMPLETE! Next: Level " + (currentLevelIdx + 1));
+            setupLevel(); 
         } else {
-            alert("YOU ARE THE BAR BALANCE MASTER! Game Over (Win)");
+            alert("WINNER!");
             currentLevelIdx = 0;
             document.getElementById('start-screen').style.display = 'flex';
         }
@@ -403,7 +329,6 @@
         document.getElementById('game-over-screen').style.display = 'flex';
     }
 
-    // --- GESTIONE INTERFACCIA ---
     function startGame() {
         document.getElementById('start-screen').style.display = 'none';
         init();
@@ -412,10 +337,9 @@
 
     function resetGame() {
         document.getElementById('game-over-screen').style.display = 'none';
-        currentLevelIdx = 0; // Reset al livello 1 come richiesto
+        currentLevelIdx = 0; 
         setupLevel();
     }
-
 </script>
 </body>
 </html>
