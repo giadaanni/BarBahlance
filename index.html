@@ -510,6 +510,7 @@ let bombTimers    = [];    // active bomb countdowns: { body, timeLeft, interval
 // Level special state
 let windForce = 0;         // pixels/s lateral force (L7)
 let windDirection = 1;     // 1=right, -1=left
+let bombGameOver = false;  // true when game over was caused by bomb explosion
 let isRaining = false;     // L9 rain flag
 let rainDrops = [];        // visual rain particles
 let bombGuaranteed = false; // L6: one bomb guaranteed
@@ -565,6 +566,10 @@ const ITEM_DEFS = [
   // L7+: Amaro (digestivo bottle — dark, squat, heavy)
   { id:'amaro',     label:'Amaro',           w:30, h:76,  density:0.009, score:240, minLevel:6,
     skins:['amaro'] },
+  // L3+: Popcorn bucket — RARE. Wide top, striped bag, popcorn spilling out.
+  //  rarity:0.08 = 8% weight in the random pool (vs 1.0 default)
+  { id:'popcorn',   label:'Popcorn',         w:44, h:56,  density:0.004, score:500, minLevel:2,
+    rarity:0.08, skins:['popcorn'] },
 ];
 
 // Special hazard items
@@ -635,6 +640,7 @@ function setupLevel() {
   bombTimers = [];
   spawnedCount = 0;
   isGameOver = false;
+  bombGameOver = false;
   isCountingDown = false;
 
   // Reset special level state
@@ -665,7 +671,7 @@ function setupLevel() {
   }
   if (special === 'wind') {
     windDirection = Math.random() < 0.5 ? 1 : -1;
-    windForce = 0.000275; // applied as acceleration per tick
+    windForce = 0.000135; // half of previous value
   }
   if (special === 'pigeon') {
     pigeonGuaranteed = true;
@@ -764,15 +770,15 @@ function physicsUpdate() {
 
   // ── Wind force (L7) ───────────────────────────────────────────────────────
   if (windForce > 0) {
-    // Occasionally gust direction change (every ~5s at 60fps = ~300 frames)
     if (Math.random() < 0.003) windDirection *= -1;
     items.forEach(item => {
-      // Apply to all items (in flight and landed) for stronger effect
+      // Wind only affects drink items — NOT the tray
       Body.applyForce(item, item.position, {
         x: windDirection * windForce * item.mass,
         y: 0
       });
     });
+    // tray is NOT in the items array, so it's unaffected — player controls it freely
   }
 
   // ── Anti-tunneling: cap vertical velocity of items to their own half-height ──
@@ -849,6 +855,7 @@ function physicsUpdate() {
     p.x  += p.vx;
     p.y  += p.vy;
     p.vy += 0.18;  // mini gravity
+    if (p.isPopcorn && p.rotV) p.rot += p.rotV;  // rotation for popcorn
     p.life -= 1;
     if (p.life <= 0) particles.splice(i, 1);
   }
@@ -859,7 +866,8 @@ function physicsUpdate() {
 // ─────────────────────────────────────────────
 function explodeBomb(bombBody) {
   if (isGameOver) return;
-  isGameOver = true; // prevent double trigger
+  isGameOver = true;
+  bombGameOver = true; // flag so crash screen shows explosion bg instead of shards
   // Stop game timers immediately
   clearInterval(spawnTimer);
   clearInterval(countTimer);
@@ -1025,7 +1033,8 @@ const ITEM_COLORS = {
   prosecco:'#f5e642',
   spritz:'#ff7f28',
   amaro:'#2a1a0a',
-  piccione:'#aaaaaa',     bomba:'#222222'
+  piccione:'#aaaaaa',     bomba:'#222222',
+  popcorn:'#f5d020',
 };
 
 // cl per item (for spilled liquid display)
@@ -1039,11 +1048,35 @@ const ITEM_CL = {
   highball:20,      grappa:4,
   prosecco:10,      spritz:20,           amaro:4,
   piccione:0,       bomba:0,
+  popcorn:0,
 };
 const TIPPED_PENALTY_PTS = 100;
 
 function spawnLandParticles(x, y, def) {
   const skinKey = def._skin || def.id;
+
+  // Popcorn — launches kernel-shaped particles upward from the top
+  if (def.id === 'popcorn') {
+    for (let i = 0; i < 8; i++) {
+      const angle = -Math.PI * 0.5 + (Math.random() - 0.5) * Math.PI * 1.1;
+      const speed = 3 + Math.random() * 5;
+      particles.push({
+        x: x + (Math.random() - 0.5) * def.w * 0.6,
+        y: y - def.h * 0.5,  // launch from top of bucket
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 40 + Math.random() * 20,
+        maxLife: 60,
+        size: 4 + Math.random() * 5,
+        color: `hsl(${44 + Math.random() * 10|0}, 88%, ${82 + Math.random() * 10|0}%)`,
+        isPopcorn: true,
+        rot: Math.random() * Math.PI * 2,
+        rotV: (Math.random() - 0.5) * 0.3,
+      });
+    }
+    return;
+  }
+
   const col = ITEM_COLORS[skinKey] || ITEM_COLORS[def.id] || '#fff';
   const count = def.id === 'boccale' ? 18 : 10;
   for (let i = 0; i < count; i++) {
@@ -1156,10 +1189,29 @@ function drawScene() {
   particles.forEach(p => {
     const alpha = p.life / p.maxLife;
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
-    ctx.fill();
+
+    if (p.isPopcorn) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot || 0);
+      const r = p.size;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.5, 0);
+      ctx.bezierCurveTo(-r * 0.9, -r * 0.8,  r * 0.6, -r * 1.1,  r * 0.8, -r * 0.2);
+      ctx.bezierCurveTo( r * 1.1,  r * 0.5, -r * 0.2,  r * 0.9, -r * 0.5,  0);
+      ctx.closePath();
+      ctx.fillStyle = p.color;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(180,130,40,0.5)';
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+      ctx.fill();
+    }
   });
   ctx.globalAlpha = 1;
 
@@ -1232,6 +1284,7 @@ function drawItem(ctx, def) {
     case 'prosecco':        drawProsecco(ctx, def); break;
     case 'spritz':          drawSpritz(ctx, def); break;
     case 'amaro':           drawAmaro(ctx, def); break;
+    case 'popcorn':         drawPopcorn(ctx, def); break;
     // ── Hazards ──
     case 'piccione':        drawPiccione(ctx, def); break;
     case 'bomba':           drawBomba(ctx, def); break;
@@ -2177,7 +2230,105 @@ function drawAmaro(ctx, d) {
   ctx.beginPath(); ctx.rect(-hw,bodyTop,d.w,hh*2); ctx.stroke();
 }
 
-// ── NEXT ITEM PREVIEW ────────────────────────────────────────────────────────
+// ── POPCORN BUCKET — classic red/white striped bag, overflowing kernels ────────
+function drawPopcorn(ctx, d) {
+  const hw = d.w / 2, hh = d.h / 2;
+
+  // Bucket body — trapezoid wider at top
+  const topW = hw * 1.0, botW = hw * 0.72;
+  ctx.beginPath();
+  ctx.moveTo(-topW, -hh);
+  ctx.lineTo( topW, -hh);
+  ctx.lineTo( botW,  hh * 0.72);
+  ctx.lineTo(-botW,  hh * 0.72);
+  ctx.closePath();
+  ctx.fillStyle = '#f5f0e8'; ctx.fill();
+
+  // Red & white stripes (4 pairs)
+  ctx.save(); ctx.clip();
+  const stripes = 8;
+  for (let i = 0; i < stripes; i++) {
+    if (i % 2 === 0) {
+      const x = -topW + (i / stripes) * topW * 2;
+      const x2 = -topW + ((i + 1) / stripes) * topW * 2;
+      ctx.beginPath();
+      ctx.moveTo(x,  -hh);
+      ctx.lineTo(x2, -hh);
+      ctx.lineTo(x2 * (botW / topW),  hh * 0.72);
+      ctx.lineTo(x  * (botW / topW),  hh * 0.72);
+      ctx.closePath();
+      ctx.fillStyle = '#e82020';
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  // Outline
+  ctx.beginPath();
+  ctx.moveTo(-topW, -hh);
+  ctx.lineTo( topW, -hh);
+  ctx.lineTo( botW,  hh * 0.72);
+  ctx.lineTo(-botW,  hh * 0.72);
+  ctx.closePath();
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1.2; ctx.stroke();
+
+  // Bottom base strip
+  ctx.beginPath();
+  ctx.moveTo(-botW, hh * 0.72);
+  ctx.lineTo( botW, hh * 0.72);
+  ctx.lineTo( botW * 0.96, hh);
+  ctx.lineTo(-botW * 0.96, hh);
+  ctx.closePath();
+  ctx.fillStyle = '#e82020'; ctx.fill();
+
+  // Rim band at top
+  ctx.beginPath();
+  ctx.rect(-topW, -hh, topW * 2, hh * 0.12);
+  ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.strokeStyle = 'rgba(200,0,0,0.4)'; ctx.lineWidth = 0.6; ctx.stroke();
+
+  // Shine strip
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.beginPath();
+  ctx.moveTo(-topW + 3, -hh + 2);
+  ctx.lineTo(-topW * 0.55, -hh + 2);
+  ctx.lineTo(-botW * 0.55,  hh * 0.70);
+  ctx.lineTo(-topW + 3,     hh * 0.70);
+  ctx.closePath(); ctx.fill();
+
+  // ── Popcorn kernels overflowing from top ────────────────────────────────
+  // Each kernel: irregular rounded blob, cream/yellow tones
+  const kernels = [
+    { x: -hw * 0.55, y: -hh - 10, r: 9,  hue: 48 },
+    { x:  hw * 0.50, y: -hh - 12, r: 10, hue: 44 },
+    { x:  hw * 0.10, y: -hh - 18, r: 11, hue: 50 },
+    { x: -hw * 0.15, y: -hh -  6, r: 8,  hue: 46 },
+    { x:  hw * 0.72, y: -hh -  4, r: 7,  hue: 52 },
+    { x: -hw * 0.78, y: -hh -  5, r: 7,  hue: 47 },
+    { x:  hw * 0.30, y: -hh - 28, r: 9,  hue: 49 },
+    { x: -hw * 0.30, y: -hh - 22, r: 10, hue: 45 },
+  ];
+  kernels.forEach(k => {
+    ctx.save();
+    ctx.translate(k.x, k.y);
+    // Irregular blob via bezier
+    ctx.beginPath();
+    ctx.moveTo(-k.r * 0.5, 0);
+    ctx.bezierCurveTo(-k.r * 0.9, -k.r * 0.8,  k.r * 0.6, -k.r * 1.1,  k.r * 0.8, -k.r * 0.2);
+    ctx.bezierCurveTo( k.r * 1.1,  k.r * 0.5, -k.r * 0.2,  k.r * 0.9, -k.r * 0.5,  0);
+    ctx.closePath();
+    ctx.fillStyle = `hsl(${k.hue}, 88%, 88%)`;
+    ctx.fill();
+    ctx.strokeStyle = `hsl(${k.hue - 10}, 70%, 62%)`;
+    ctx.lineWidth = 0.8; ctx.stroke();
+    // little specular dot
+    ctx.beginPath(); ctx.arc(-k.r * 0.2, -k.r * 0.35, k.r * 0.22, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fill();
+    ctx.restore();
+  });
+}
+
+
 function drawNextPreview(ctx) {
   if (!nextItemDef) return;
   const d = nextItemDef;
@@ -2575,12 +2726,16 @@ function pickRandomDef() {
     return pickExtremeItem();
   }
 
-  // Build available pool based on current level
+  // Build available pool based on current level, weighted by rarity
   const availableItems = ITEM_DEFS.filter(d => currentLevelIdx >= d.minLevel);
-
-  // L1-L3: only original 6 (minLevel:0)
-  // L4+: new drinks start appearing (handled by minLevel gating above)
-  return assignSkin(availableItems[Math.floor(Math.random() * availableItems.length)]);
+  // Build weighted array: default weight 1.0, rare items have weight < 1
+  const weighted = [];
+  availableItems.forEach(d => {
+    const w = d.rarity !== undefined ? d.rarity : 1.0;
+    const slots = Math.max(1, Math.round(w * 100));
+    for (let i = 0; i < slots; i++) weighted.push(d);
+  });
+  return assignSkin(weighted[Math.floor(Math.random() * weighted.length)]);
 }
 
 // Assign a random skin to a def — returns a shallow copy with _skin set
@@ -2985,8 +3140,12 @@ function triggerGameOver(skipShake) {
     setTimeout(function() { wrap.style.animation = ''; }, 500);
   }
 
-  // Delay so the gameover screen is fully rendered before sizing canvas
-  startCrashAnimation();
+  // Choose background animation: explosion if bomb, glass shards otherwise
+  if (bombGameOver) {
+    startCrashExplosionBg();
+  } else {
+    startCrashAnimation();
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -3087,138 +3246,271 @@ function showLevelSelect() {
 // ─────────────────────────────────────────────
 //  CRASH DEBRIS ANIMATION
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+//  CRASH ANIMATION — iridescent glass shards
+//  Shown in background of CRASH! screen on normal loss
+// ─────────────────────────────────────────────
 function startCrashAnimation() {
   const canvas = document.getElementById('crash-canvas');
   if (!canvas) return;
 
-  // Canvas is now at game-wrap level — always rendered, always has correct dimensions
   const wrap = document.getElementById('game-wrap');
-  const W = wrap.offsetWidth  || 420;
-  const H = wrap.offsetHeight || 630;
+  const rect = wrap.getBoundingClientRect();
+  const W = Math.round(rect.width)  || 420;
+  const H = Math.round(rect.height) || 630;
 
-  // Set both the HTML attribute size (pixel buffer) AND CSS size
-  canvas.width  = W;
-  canvas.height = H;
+  canvas.width  = W;  canvas.height = H;
   canvas.style.width  = W + 'px';
   canvas.style.height = H + 'px';
-  canvas.style.display = 'block';   // make it visible
+  canvas.style.display = 'block';
 
   const ctx = canvas.getContext('2d');
-  const cx = W / 2;
-  const cy = H * 0.40;  // burst from centre of screen
+  const cx = W * 0.5, cy = H * 0.42;
 
-  // ── 40 iridescent glass shards ──────────────────────────────────────────
+  // ── 48 iridescent glass shards ─────────────────────────────────────────
   const shards = [];
-  for (let i = 0; i < 40; i++) {
-    const angle = (Math.PI * 2 / 40) * i + (Math.random() - 0.5) * 0.5;
-    const speed = 3 + Math.random() * 6;
+  for (let i = 0; i < 48; i++) {
+    const angle = (Math.PI * 2 / 48) * i + (Math.random() - 0.5) * 0.4;
+    const speed = 2.5 + Math.random() * 6.5;
     shards.push({
-      x:  cx + (Math.random() - 0.5) * W * 0.3,
-      y:  cy + (Math.random() - 0.5) * H * 0.2,
+      x: cx + (Math.random() - 0.5) * W * 0.30,
+      y: cy + (Math.random() - 0.5) * H * 0.18,
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - Math.random() * 2,
-      sz: 16 + Math.random() * 32,          // size 16–48 px
+      vy: Math.sin(angle) * speed - Math.random() * 2.5,
+      sz: 14 + Math.random() * 34,
       rot:  Math.random() * Math.PI * 2,
-      rotV: (Math.random() - 0.5) * 0.28,
-      hue:  180 + Math.random() * 60,       // cyan/blue glass range
-      irid: Math.random() * Math.PI * 2,    // iridescent phase offset
+      rotV: (Math.random() - 0.5) * 0.26,
+      hue:  170 + Math.random() * 80,
+      sat:  80 + Math.random() * 15,
+      lit:  68 + Math.random() * 18,
+      irid: Math.random() * Math.PI * 2,
     });
   }
-
-  // ── 50 yellow/orange sparks ──────────────────────────────────────────────
+  // ── 60 hot sparks ───────────────────────────────────────────────────────
   const sparks = [];
-  for (let i = 0; i < 50; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 2 + Math.random() * 9;
+  for (let i = 0; i < 60; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 1.5 + Math.random() * 8.5;
     sparks.push({
       x: cx, y: cy,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 3,
-      life: 1,
-      decay: 0.013 + Math.random() * 0.020,
-      r: 2.5 + Math.random() * 3,
-      col: Math.random() < 0.55 ? '#ffe044' : '#ff6622',
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 2.5,
+      life: 1, decay: 0.011 + Math.random() * 0.018,
+      r: 2 + Math.random() * 3,
+      col: Math.random() < 0.5 ? '#ffe040' : '#ff6020',
     });
   }
 
   let frame = 0;
-  const FRAMES = 180;
+  const TOTAL = 210;
 
   function tick() {
     frame++;
-    if (frame > FRAMES) {
+    if (frame > TOTAL) {
       ctx.clearRect(0, 0, W, H);
-      canvas.style.display = 'none';  // hide when done
+      canvas.style.display = 'none';
       return;
     }
     ctx.clearRect(0, 0, W, H);
-    const prog = frame / FRAMES;
+    const prog = frame / TOTAL;
 
-    // ── Shards ────────────────────────────────────────────────────────────
-    shards.forEach(function(s) {
-      s.x  += s.vx;  s.vx *= 0.97;
-      s.y  += s.vy;  s.vy += 0.11;
+    // subtle dark vignette glow
+    const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, W * 0.65);
+    bg.addColorStop(0, 'rgba(20,10,30,0.45)');
+    bg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+    // ── shards ────────────────────────────────────────────────────────────
+    shards.forEach(s => {
+      s.x  += s.vx;  s.vx *= 0.973;
+      s.y  += s.vy;  s.vy += 0.10;
       s.rot += s.rotV;
-
-      // Alpha: full for first 40% of animation, then fade out
-      const alpha = prog < 0.4 ? 1.0 : Math.max(0, 1 - (prog - 0.4) / 0.6);
+      const alpha = prog < 0.45 ? 1.0 : Math.max(0, 1 - (prog - 0.45) / 0.55);
       if (alpha < 0.02) return;
-
-      // Iridescent hue shifts over time
-      const t = frame * 0.07 + s.irid;
-      const hue = s.hue + Math.sin(t) * 40;   // oscillates cyan↔blue↔white
-
+      const t   = frame * 0.06 + s.irid;
+      const hue = s.hue + Math.sin(t) * 50;
+      const sat = s.sat + Math.cos(t * 0.9) * 8;
+      const lit = s.lit + Math.sin(t * 1.3) * 12;
       ctx.save();
       ctx.translate(s.x, s.y);
       ctx.rotate(s.rot);
-
-      // Main shard body
+      // main shard triangle
       ctx.beginPath();
-      ctx.moveTo(0,            -s.sz * 0.55);
-      ctx.lineTo( s.sz * 0.46,  s.sz * 0.40);
-      ctx.lineTo(-s.sz * 0.40,  s.sz * 0.32);
+      ctx.moveTo( 0,            -s.sz * 0.56);
+      ctx.lineTo( s.sz * 0.46,   s.sz * 0.41);
+      ctx.lineTo(-s.sz * 0.40,   s.sz * 0.34);
       ctx.closePath();
-      ctx.fillStyle   = `hsla(${hue}, 90%, 78%, ${(alpha * 0.80).toFixed(2)})`;
-      ctx.strokeStyle = `rgba(255,255,255,${(alpha * 0.95).toFixed(2)})`;
+      ctx.fillStyle   = `hsla(${hue|0},${sat|0}%,${lit|0}%,${(alpha * 0.80).toFixed(2)})`;
+      ctx.strokeStyle = `rgba(255,255,255,${(alpha * 0.92).toFixed(2)})`;
       ctx.lineWidth   = 1.5;
-      ctx.fill();
-      ctx.stroke();
-
-      // Bright inner highlight facet
+      ctx.fill(); ctx.stroke();
+      // inner bright facet
       ctx.beginPath();
       ctx.moveTo( 0,            -s.sz * 0.48);
-      ctx.lineTo( s.sz * 0.18,   s.sz * 0.08);
-      ctx.lineTo(-s.sz * 0.13,   s.sz * 0.04);
+      ctx.lineTo( s.sz * 0.20,   s.sz * 0.10);
+      ctx.lineTo(-s.sz * 0.14,   s.sz * 0.06);
       ctx.closePath();
-      ctx.fillStyle = `rgba(255,255,255,${(alpha * 0.70).toFixed(2)})`;
+      ctx.fillStyle = `rgba(255,255,255,${(alpha * 0.68).toFixed(2)})`;
       ctx.fill();
-
+      // second micro-facet shimmer
+      ctx.beginPath();
+      ctx.moveTo(-s.sz * 0.22, -s.sz * 0.28);
+      ctx.lineTo(-s.sz * 0.10,  s.sz * 0.08);
+      ctx.lineTo(-s.sz * 0.34,  s.sz * 0.00);
+      ctx.closePath();
+      ctx.fillStyle = `hsla(${(hue + 40)|0},100%,90%,${(alpha * 0.35).toFixed(2)})`;
+      ctx.fill();
       ctx.restore();
     });
-
-    // ── Sparks ─────────────────────────────────────────────────────────────
-    sparks.forEach(function(sp) {
-      sp.x  += sp.vx; sp.vx *= 0.95;
-      sp.y  += sp.vy; sp.vy += 0.22;
+    // ── sparks ────────────────────────────────────────────────────────────
+    sparks.forEach(sp => {
+      sp.x += sp.vx; sp.vx *= 0.95;
+      sp.y += sp.vy; sp.vy += 0.20;
       sp.life -= sp.decay;
       if (sp.life < 0.02) return;
       ctx.beginPath();
       ctx.arc(sp.x, sp.y, sp.r * sp.life, 0, Math.PI * 2);
-      ctx.fillStyle   = sp.col;
-      ctx.globalAlpha = sp.life;
-      ctx.fill();
+      ctx.fillStyle = sp.col; ctx.globalAlpha = sp.life * 0.85; ctx.fill();
     });
     ctx.globalAlpha = 1;
-
     requestAnimationFrame(tick);
   }
-
-  requestAnimationFrame(tick);  // start on next frame — game-wrap is always painted
+  requestAnimationFrame(function() { requestAnimationFrame(tick); });
 }
 
 // ─────────────────────────────────────────────
-//  CONFETTI ANIMATION (L10 WIN)
+//  CRASH EXPLOSION BG — shown when bomb kills
+//  Runs on crash-canvas, loops fire & debris
 // ─────────────────────────────────────────────
+function startCrashExplosionBg() {
+  const canvas = document.getElementById('crash-canvas');
+  if (!canvas) return;
+
+  const wrap = document.getElementById('game-wrap');
+  const rect = wrap.getBoundingClientRect();
+  const W = Math.round(rect.width)  || 420;
+  const H = Math.round(rect.height) || 630;
+
+  canvas.width  = W;  canvas.height = H;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  canvas.style.display = 'block';
+
+  const ctx = canvas.getContext('2d');
+  const cx = W * 0.5, cy = H * 0.50;
+
+  // ── 22 fireballs ──────────────────────────────────────────────────────
+  const balls = [];
+  for (let i = 0; i < 22; i++) {
+    const angle = (Math.PI * 2 / 22) * i + (Math.random() - 0.5) * 0.3;
+    const speed = 3.5 + Math.random() * 5.5;
+    balls.push({
+      x: cx + (Math.random() - 0.5) * 60,
+      y: cy + (Math.random() - 0.5) * 60,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1.5,
+      r: 14 + Math.random() * 22,
+      life: 1.0, decay: 0.018 + Math.random() * 0.014,
+    });
+  }
+  // ── 100 fire & smoke particles ────────────────────────────────────────
+  const sparks = [];
+  for (let i = 0; i < 100; i++) {
+    const a  = Math.random() * Math.PI * 2;
+    const sp = 1 + Math.random() * 11;
+    const isSmoke = Math.random() < 0.25;
+    sparks.push({
+      x: cx + (Math.random() - 0.5) * 30,
+      y: cy + (Math.random() - 0.5) * 30,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - (isSmoke ? 1.5 : 4),
+      r: isSmoke ? 8 + Math.random() * 14 : 2 + Math.random() * 4,
+      life: 1.0, decay: isSmoke ? 0.008 + Math.random() * 0.010 : 0.016 + Math.random() * 0.022,
+      smoke: isSmoke,
+      col: isSmoke ? 'rgba(60,50,50,' : (Math.random() < 0.45 ? '#ff6600' : (Math.random() < 0.5 ? '#ffcc00' : '#ff2200')),
+    });
+  }
+  // ── 40 debris chunks ─────────────────────────────────────────────────
+  const debris = [];
+  for (let i = 0; i < 40; i++) {
+    const a = Math.random() * Math.PI * 2, sp = 3 + Math.random() * 9;
+    debris.push({
+      x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 5,
+      rot: Math.random() * Math.PI * 2, rotV: (Math.random() - 0.5) * 0.35,
+      sz: 3 + Math.random() * 8, life: 1, decay: 0.010 + Math.random() * 0.014,
+      col: Math.random() < 0.6 ? '#444' : (Math.random() < 0.5 ? '#ff4400' : '#888'),
+    });
+  }
+
+  let frame = 0;
+  const TOTAL = 200;
+
+  function tick() {
+    frame++;
+    if (frame > TOTAL) {
+      ctx.clearRect(0, 0, W, H);
+      canvas.style.display = 'none';
+      return;
+    }
+    ctx.clearRect(0, 0, W, H);
+    const prog = frame / TOTAL;
+
+    // flash
+    if (frame <= 6) {
+      const fa = (1 - frame / 6) * 0.90;
+      const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, W * 0.8);
+      fg.addColorStop(0, `rgba(255,240,180,${fa})`);
+      fg.addColorStop(0.3, `rgba(255,160,40,${fa * 0.7})`);
+      fg.addColorStop(1, 'rgba(255,60,0,0)');
+      ctx.fillStyle = fg; ctx.fillRect(0, 0, W, H);
+    }
+    // shockwave ring
+    if (frame <= 18) {
+      const sw = frame / 18, swR = sw * W * 0.65, swA = Math.max(0, 1 - sw) * 0.5;
+      ctx.beginPath(); ctx.arc(cx, cy, swR, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,220,100,${swA})`; ctx.lineWidth = 3 * (1 - sw); ctx.stroke();
+    }
+    // smoke
+    sparks.filter(sp => sp.smoke).forEach(sp => {
+      sp.x += sp.vx; sp.vx *= 0.97; sp.y += sp.vy; sp.vy += 0.04;
+      sp.life -= sp.decay; if (sp.life < 0.02) return;
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, sp.r * (1 + (1 - sp.life) * 2), 0, Math.PI * 2);
+      ctx.fillStyle = sp.col + (sp.life * 0.22).toFixed(2) + ')'; ctx.fill();
+    });
+    // fireballs
+    balls.forEach(b => {
+      b.x += b.vx; b.vx *= 0.94; b.y += b.vy; b.vy += 0.18;
+      b.life -= b.decay; if (b.life < 0.02) return;
+      const gr = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * b.life * 1.4);
+      gr.addColorStop(0,    `rgba(255,255,200,${(b.life*0.95).toFixed(2)})`);
+      gr.addColorStop(0.25, `rgba(255,180,30,${(b.life*0.85).toFixed(2)})`);
+      gr.addColorStop(0.6,  `rgba(255,60,0,${(b.life*0.60).toFixed(2)})`);
+      gr.addColorStop(1, 'rgba(80,0,0,0)');
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r * b.life * 1.4, 0, Math.PI * 2);
+      ctx.fillStyle = gr; ctx.fill();
+    });
+    // fire sparks
+    sparks.filter(sp => !sp.smoke).forEach(sp => {
+      sp.x += sp.vx; sp.vx *= 0.95; sp.y += sp.vy; sp.vy += 0.25;
+      sp.life -= sp.decay; if (sp.life < 0.02) return;
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, sp.r * sp.life, 0, Math.PI * 2);
+      ctx.fillStyle = sp.col; ctx.globalAlpha = sp.life * 0.9; ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+    // debris
+    debris.forEach(d => {
+      d.x += d.vx; d.vx *= 0.97; d.y += d.vy; d.vy += 0.30;
+      d.rot += d.rotV; d.life -= d.decay; if (d.life < 0.02) return;
+      ctx.save(); ctx.translate(d.x, d.y); ctx.rotate(d.rot);
+      ctx.fillStyle = d.col; ctx.globalAlpha = d.life;
+      ctx.fillRect(-d.sz / 2, -d.sz / 2, d.sz, d.sz * 0.6);
+      ctx.restore();
+    });
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(function() { requestAnimationFrame(tick); });
+}
+
+
 function startConfettiAnimation() {
   const canvas = document.getElementById('confetti-canvas');
   if (!canvas) return;
