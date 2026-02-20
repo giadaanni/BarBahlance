@@ -1,0 +1,3348 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Bar Balance</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=VT323&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0a0f;
+    display: flex; justify-content: center; align-items: center;
+    height: 100vh; overflow: hidden;
+    font-family: 'VT323', monospace;
+  }
+  #game-wrap {
+    position: relative;
+    width: min(100vh * 0.667, 100vw, 420px);
+    aspect-ratio: 2/3;
+  }
+  canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+
+  /* ── OVERLAY SCREENS ── */
+  .screen {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 20;
+  }
+  /* ── SCREEN 1: COVER ── */
+  #start-screen {
+    cursor: pointer;
+    overflow: hidden;
+  }
+  #cover-bg {
+    position: absolute; inset: 0;
+    background: url('./ASSET/BarBahlance_mainScreen.jpg')
+                no-repeat center center / cover;
+  }
+  /* Dark gradient at bottom so TAP TO START is readable */
+  #cover-bg::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.72) 100%);
+  }
+  #start-screen .start-hint {
+    position: relative; z-index: 2;
+    font-size: clamp(18px, 4.5vw, 26px);
+    letter-spacing: 4px;
+    text-shadow: 0 0 20px #f0b429, 0 0 40px #f0b42988;
+    color: #fff;
+  }
+
+  /* ── SCREEN 2: TUTORIAL ── */
+  #tutorial-screen {
+    background: radial-gradient(ellipse at 50% 30%, #1a1035 0%, #0a0a0f 70%);
+    gap: 0;
+  }
+  .tut-deco {
+    display: flex; gap: 16px; align-items: flex-end;
+    margin-bottom: 18px;
+  }
+  .tut-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(34px, 9vw, 50px);
+    color: #f0b429;
+    letter-spacing: 5px;
+    text-shadow: 0 0 24px #f0b42966;
+    margin-bottom: 22px;
+  }
+  .tut-rules {
+    display: flex; flex-direction: column; gap: 10px;
+    width: 82%; max-width: 320px;
+  }
+  .tut-rule {
+    display: flex; align-items: center; gap: 12px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 8px;
+    padding: 9px 14px;
+    font-size: clamp(13px, 3.2vw, 17px);
+    color: #e0e0e0;
+    font-family: 'VT323', monospace;
+    letter-spacing: 1px;
+    line-height: 1.3;
+  }
+  .tut-rule span { flex: 1; }
+  .tut-tagline {
+    margin-top: 18px;
+    font-size: clamp(12px, 3vw, 16px);
+    color: rgba(255,255,255,0.35);
+    font-style: italic;
+    font-family: 'VT323', monospace;
+    letter-spacing: 1px;
+  }
+  .tut-btn { margin-top: 22px; }
+
+  /* Trophy float on win screen */
+  #win-trophy {
+    font-size: clamp(60px, 16vw, 88px);
+    animation: trophyFloat 1.8s ease-in-out infinite;
+    filter: drop-shadow(0 0 20px rgba(240,180,41,0.7));
+  }
+  @keyframes trophyFloat {
+    0%,100% { transform: translateY(0) rotate(-4deg) scale(1); }
+    50%      { transform: translateY(-14px) rotate(4deg) scale(1.06); }
+  }
+  .start-hint { animation: blink 1.2s step-end infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  .deco-g { opacity:.8; animation: float 3s ease-in-out infinite; display:inline-block; }
+  @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+
+  .game-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(52px, 12vw, 72px);
+    letter-spacing: 4px;
+    line-height: 1;
+    color: #fff;
+    text-shadow: 0 0 40px #f0b429, 0 0 80px #f0b42966;
+  }
+  .title-sub {
+    font-size: clamp(16px, 4vw, 22px);
+    color: #f0b429;
+    letter-spacing: 6px;
+    margin-top: 6px;
+    text-shadow: 0 0 12px #f0b42988;
+  }
+
+  /* ── HUD ── */
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0;
+    padding: 10px 14px;
+    display: none;
+    justify-content: space-between; align-items: flex-start;
+    z-index: 15; pointer-events: none;
+  }
+  .hud-pill {
+    background: rgba(0,0,0,.55);
+    border: 1.5px solid rgba(255,255,255,.18);
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: clamp(14px, 3.5vw, 20px);
+    color: #fff;
+    text-shadow: 0 0 8px #f0b42966;
+  }
+  .hud-level { color: #f0b429; }
+
+  /* Countdown ring */
+  #countdown-wrap {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    display: none; flex-direction: column; align-items: center;
+    z-index: 15; pointer-events: none;
+  }
+  #countdown-label {
+    font-size: clamp(13px, 3vw, 18px);
+    color: #aaa; letter-spacing: 2px; margin-bottom: 4px;
+  }
+  #countdown-num {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(48px, 11vw, 64px);
+    color: #f0b429;
+    text-shadow: 0 0 24px #f0b429;
+    line-height: 1;
+  }
+  #countdown-bar-wrap {
+    width: 140px; height: 6px;
+    background: rgba(255,255,255,.1); border-radius: 3px; margin-top: 8px; overflow: hidden;
+  }
+  #countdown-bar { height: 100%; background: #f0b429; border-radius: 3px; transition: width 0.9s linear; }
+
+  /* ── GAME OVER ── */
+  #gameover-screen {
+    background: rgba(0,0,0,.88);
+    display: none;
+  }
+  .crash-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(56px, 14vw, 80px);
+    color: #e53e3e;
+    text-shadow: 0 0 30px #e53e3e88;
+    letter-spacing: 4px;
+    animation: crashPulse 0.9s ease-in-out infinite;
+  }
+  @keyframes crashPulse {
+    0%,100% { text-shadow: 0 0 30px #e53e3e88; transform: scale(1); }
+    50%      { text-shadow: 0 0 55px #e53e3ecc, 0 0 90px #e53e3e44; transform: scale(1.05); }
+  }
+  .score-line {
+    font-size: clamp(18px, 4vw, 24px);
+    color: #ccc; margin-top: 10px; letter-spacing: 1px;
+  }
+  .score-line span { color: #f0b429; }
+  .btn {
+    margin-top: 32px;
+    padding: 14px 36px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(20px, 5vw, 28px);
+    letter-spacing: 3px;
+    background: #f0b429;
+    color: #0a0a0f;
+    border: none; border-radius: 4px;
+    cursor: pointer;
+    transition: transform .1s, box-shadow .1s;
+    box-shadow: 0 4px 0 #a07a1a;
+  }
+  .btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #a07a1a; }
+
+  /* ── WIN ── */
+  #win-screen {
+    background: rgba(0,0,0,.88);
+    display: none;
+  }
+  .win-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(44px, 11vw, 64px);
+    color: #f0b429;
+    text-shadow: 0 0 30px #f0b42988;
+    letter-spacing: 4px;
+    text-align: center;
+  }
+
+  /* Spawn indicator */
+  #spawn-indicator {
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    font-size: 28px; pointer-events: none; z-index: 14;
+    transition: opacity .3s;
+    opacity: 0;
+  }
+  #spawn-indicator.show { opacity: 1; }
+
+  /* Tilt warning */
+  #tilt-warn {
+    position: absolute; bottom: 200px; left: 50%; transform: translateX(-50%);
+    font-size: clamp(14px, 3.5vw, 20px);
+    color: #e53e3e;
+    text-shadow: 0 0 12px #e53e3e;
+    letter-spacing: 2px;
+    pointer-events: none; z-index: 14;
+    opacity: 0; transition: opacity .2s;
+  }
+  #tilt-warn.show { opacity: 1; animation: tiltPulse .4s ease infinite alternate; }
+  @keyframes tiltPulse { from{text-shadow:0 0 8px #e53e3e} to{text-shadow:0 0 24px #e53e3e} }
+
+  /* Score bar */
+  #score-bar {
+    position: absolute; bottom: 200px; left: 0; right: 0;
+    display: none;
+    justify-content: space-between;
+    padding: 0 14px;
+    pointer-events: none; z-index: 15;
+    font-size: clamp(16px, 4vw, 22px);
+  }
+  #score-disp { color: #fff; text-shadow: 0 0 8px #f0b42966; }
+  #best-disp  { color: #f0b429; text-shadow: 0 0 8px #f0b42966; }
+
+  /* Big score on game-over/win screens */
+  .go-score-big {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(44px, 11vw, 64px);
+    color: #fff;
+    text-shadow: 0 0 20px rgba(255,255,255,0.4);
+    margin-top: 6px;
+    letter-spacing: 3px;
+  }
+
+  /* Level select screen */
+  #levelselect-screen {
+    background: radial-gradient(ellipse at 50% 30%, #1a1035 0%, #0a0a0f 70%);
+    overflow-y: auto;
+    justify-content: flex-start;
+    padding: 20px 0 24px;
+    gap: 0;
+  }
+  #levelselect-screen::-webkit-scrollbar { width: 4px; }
+  #levelselect-screen::-webkit-scrollbar-thumb { background: rgba(240,180,41,0.4); border-radius:2px; }
+</style>
+</head>
+<body>
+<div id="game-wrap">
+  <!-- SCREEN 1: COVER -->
+  <div id="start-screen" class="screen" onclick="showTutorial()">
+    <div id="cover-bg"></div>
+    <div class="start-hint" style="margin-top:0; position:absolute; bottom: 12%;">TAP TO START</div>
+  </div>
+
+  <!-- SCREEN 2: TUTORIAL -->
+  <div id="tutorial-screen" class="screen" style="display:none;">
+    <div class="tut-deco" aria-hidden="true">
+      <span class="deco-g" style="font-size:44px">🍺</span>
+      <span class="deco-g" style="font-size:32px;animation-delay:.3s">🍷</span>
+      <span class="deco-g" style="font-size:48px;animation-delay:.6s">🍹</span>
+      <span class="deco-g" style="font-size:28px;animation-delay:.9s">🥂</span>
+      <span class="deco-g" style="font-size:38px;animation-delay:1.2s">🍸</span>
+    </div>
+    <div class="tut-title">HOW TO PLAY</div>
+    <div class="tut-rules">
+      <div class="tut-rule">🤚 <span>Move your hand to balance the tray</span></div>
+      <div class="tut-rule">🍺 <span>Drinks will fall — catch them all!</span></div>
+      <div class="tut-rule">⚖️ <span>Don't let the tray tilt too far</span></div>
+      <div class="tut-rule">🏁 <span>Hold steady for 5 seconds to pass</span></div>
+    </div>
+    <div class="tut-tagline">"Deliver the round without the drama!"</div>
+    <button class="btn tut-btn" onclick="startGame()">START GAME</button>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="hud-pill hud-level" id="lvl-disp">LV 1</div>
+    <div class="hud-pill" id="tilt-disp" style="font-size:clamp(11px,2.8vw,16px);">░░░░░░░░</div>
+    <div class="hud-pill" id="items-disp">0 / 3</div>
+  </div>
+  <!-- Score bar -->
+  <div id="score-bar">
+    <div id="score-disp">0</div>
+    <div id="best-disp">★ 0</div>
+  </div>
+  <div id="spawn-indicator">⬇️</div>
+  <div id="tilt-warn">⚠ TILT!</div>
+
+  <!-- COUNTDOWN -->
+  <div id="countdown-wrap">
+    <div id="countdown-label">HOLD STEADY</div>
+    <div id="countdown-num">8</div>
+    <div id="countdown-bar-wrap"><div id="countdown-bar" style="width:100%"></div></div>
+  </div>
+
+  <!-- EXPLOSION TRANSITION OVERLAY -->
+  <canvas id="explosion-transition" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:19;display:none;"></canvas>
+
+  <!-- GAMEOVER -->
+  <div id="gameover-screen" class="screen" style="background:rgba(0,0,0,0.92);">
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;padding:8px 20px;gap:0;">
+      <div class="crash-title" style="line-height:0.9;">CRASH!</div>
+      <div id="go-quip" style="font-size:clamp(12px,2.8vw,15px);color:rgba(255,120,120,0.85);
+        font-family:'VT323',monospace;letter-spacing:1px;margin-top:3px;text-align:center;
+        line-height:1.3;max-width:88%;font-style:italic;"></div>
+      <div style="width:72%;height:1px;background:rgba(229,62,62,0.3);margin:6px 0;"></div>
+      <div class="score-line" style="font-size:clamp(13px,3vw,17px);">Level <span id="go-level">1</span></div>
+      <div class="go-score-big" id="go-score" style="font-size:clamp(34px,8vw,52px);line-height:1;margin:2px 0;">0</div>
+      <div class="score-line" style="font-size:clamp(12px,2.8vw,16px);margin-top:2px;">
+        BEST&nbsp;<span id="go-best" style="color:#f0b429">0</span>
+      </div>
+      <div id="go-penalty" style="display:none;margin-top:4px;font-size:clamp(11px,2.5vw,14px);
+        color:#e53e3e;font-family:'VT323',monospace;letter-spacing:1px;text-align:center;"></div>
+      <div id="go-cl" style="display:none;margin-top:2px;font-size:clamp(11px,2.5vw,14px);
+        color:#88aacc;font-family:'VT323',monospace;letter-spacing:1px;text-align:center;"></div>
+      <div id="go-items" style="margin-top:5px;font-size:clamp(10px,2.3vw,13px);
+        color:#aaa;max-width:88%;text-align:center;line-height:1.5;
+        font-family:'VT323',monospace;letter-spacing:1px;"></div>
+      <div style="display:flex;gap:12px;align-items:center;margin-top:12px;">
+        <button class="btn" style="padding:8px 14px;font-size:clamp(16px,4vw,22px);margin-top:0"
+          onclick="goToLevelSelect()">←</button>
+        <button class="btn" style="margin-top:0;padding:10px 26px;" onclick="retryLevel()">RETRY</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CRASH SHARDS OVERLAY — after gameover-screen in DOM = always paints on top -->
+  <canvas id="crash-canvas" style="position:absolute;inset:0;pointer-events:none;z-index:25;display:none;"></canvas>
+
+  <!-- WIN (L1-L9) -->
+  <div id="win-screen" class="screen" style="cursor:pointer;" onclick="advanceFromWin()">
+    <div id="win-trophy">🏆</div>
+    <div class="win-title" style="margin-top:10px" id="win-title-text">LEVEL CLEARED!</div>
+    <div class="go-score-big" id="win-score">0</div>
+    <div class="score-line" style="font-size:clamp(13px,3vw,18px);margin-top:4px;">
+      BEST&nbsp;<span id="win-best" style="color:#f0b429">0</span>
+    </div>
+    <div id="win-penalty" style="display:none;margin-top:8px;font-size:clamp(12px,3vw,17px);
+      color:#e53e3e;font-family:'VT323',monospace;letter-spacing:1px;"></div>
+    <div id="win-cl" style="display:none;margin-top:2px;font-size:clamp(12px,3vw,17px);
+      color:#88aacc;font-family:'VT323',monospace;letter-spacing:1px;"></div>
+    <div id="win-items" style="
+      margin-top:10px;font-size:clamp(11px,2.6vw,15px);
+      color:#aaa;max-width:80%;text-align:center;line-height:1.8;
+      font-family:'VT323',monospace;letter-spacing:1px;
+    "></div>
+    <div class="start-hint" style="margin-top:16px;font-size:clamp(14px,3.5vw,20px)">TAP TO CONTINUE</div>
+  </div>
+
+  <!-- WIN L10 — grand finale -->
+  <div id="win10-screen" class="screen" style="display:none;background:rgba(0,0,0,0.93);cursor:pointer;overflow:hidden;" onclick="resetGame()">
+    <canvas id="confetti-canvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;"></canvas>
+    <div style="position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;padding:0 20px;">
+      <div style="font-size:clamp(52px,13vw,72px);animation:trophyFloat 1.8s ease-in-out infinite;filter:drop-shadow(0 0 30px gold);">🏆</div>
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:clamp(38px,9vw,56px);color:#f0b429;
+                  letter-spacing:5px;text-shadow:0 0 30px #f0b429,0 0 60px #f0b42944;">BAR GOD!</div>
+      <div style="font-size:clamp(13px,3.2vw,18px);color:#ddd;letter-spacing:2px;font-family:'VT323',monospace;">All 10 levels obliterated.</div>
+      <div style="font-size:clamp(11px,2.8vw,15px);color:rgba(255,255,255,0.45);font-family:'VT323',monospace;font-style:italic;">
+        "Even the drinks are clapping."
+      </div>
+      <div class="go-score-big" id="win10-score" style="margin-top:6px;">0</div>
+      <div class="score-line" style="font-size:clamp(13px,3vw,18px);margin-top:2px;">
+        BEST&nbsp;<span id="win10-best" style="color:#f0b429">0</span>
+      </div>
+      <div id="win10-penalty" style="display:none;margin-top:6px;font-size:clamp(12px,3vw,17px);
+        color:#e53e3e;font-family:'VT323',monospace;letter-spacing:1px;"></div>
+      <div id="win10-cl" style="display:none;margin-top:2px;font-size:clamp(12px,3vw,17px);
+        color:#88aacc;font-family:'VT323',monospace;letter-spacing:1px;"></div>
+      <div id="win10-items" style="
+        margin-top:8px;font-size:clamp(11px,2.6vw,15px);
+        color:#aaa;max-width:80%;text-align:center;line-height:1.8;
+        font-family:'VT323',monospace;letter-spacing:1px;
+      "></div>
+      <div class="start-hint" style="margin-top:16px;font-size:clamp(14px,3.5vw,20px);">TAP TO PLAY AGAIN</div>
+    </div>
+  </div>
+
+  <!-- LEVEL SELECT -->
+  <div id="levelselect-screen" class="screen" style="display:none;background:radial-gradient(ellipse at 50% 30%, #1a1035 0%, #0a0a0f 70%);overflow:hidden;padding:10px 0 8px;">
+    <div style="font-family:'Bebas Neue',sans-serif;font-size:clamp(22px,6vw,34px);color:#f0b429;letter-spacing:4px;text-shadow:0 0 16px #f0b42966;margin-bottom:8px;">SELECT LEVEL</div>
+    <div id="level-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:5px;width:92%;max-width:360px;"></div>
+    <button class="btn" style="margin-top:10px;font-size:clamp(14px,4vw,20px);padding:5px 16px;min-width:0;line-height:1;" onclick="fullReset()">←</button>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+//  CONSTANTS
+// ─────────────────────────────────────────────
+const W = 420, H = 630;
+const TRAY_W = 280, TRAY_H = 14;
+const TRAY_Y = H - 180;
+const HAND_Y = H - 80;
+// 10 levels: [itemCount, specialRule]
+// specialRules: null | 'bomb_guaranteed' | 'wind' | 'pigeon' | 'rain' | 'extreme'
+const LEVEL_CONFIGS = [
+  { count: 1,  special: null },               // L1
+  { count: 2,  special: null },               // L2
+  { count: 3,  special: null },               // L3
+  { count: 4,  special: null },               // L4
+  { count: 5,  special: null },               // L5
+  { count: 5,  special: 'bomb_guaranteed' },  // L6
+  { count: 4,  special: 'wind' },             // L7
+  { count: 5,  special: 'double_bomb' },      // L8 — 2 bombe garantite
+  { count: 3,  special: 'rain' },             // L9
+  { count: 6,  special: 'extreme' },          // L10
+];
+const LEVELS = LEVEL_CONFIGS.map(l => l.count);
+const SPAWN_INTERVAL = 2800; // ms
+const WIN_HOLD_SECS = 5;
+const WIN_AUTO_ADVANCE_SECS = 10; // seconds before auto-advancing to next level
+const MAX_TRAY_ANGLE = Math.PI * 0.22; // ~40° — tighter, more skill-based limit
+
+// ─────────────────────────────────────────────
+//  LEVEL NAMES & MESSAGES
+// ─────────────────────────────────────────────
+const LEVEL_NAMES = [
+  "Round 1: Gravity? Never Heard of It",
+  "Round 2: Two's Company, One's Already Fallen",
+  "Round 3: The Holy Trinity of Chaos",
+  "Round 4: Four Seasons, Zero Control",
+  "Round 5: Pentagon of Disasters",
+  "Round 6: Tick Tick… Ciao",
+  "Round 7: The Wind Knows What You Did",
+  "Round 8: Double Trouble, Double Boom",
+  "Round 9: It's Raining, Government's Fault",
+  "Round 10: The Apocalypse of Glassware"
+];
+const LEVEL_PASS_MSGS = [
+  ["Gravity: 0 — You: 1", "Enjoy it while it lasts. 🍺"],
+  ["Two drinks, zero disasters.", "Suspiciously well done. 🍹"],
+  ["Three? Handled.", "Even the bartender is impressed. 🍸"],
+  ["Four down!", "You're dangerously good at this. 🔥"],
+  ["Five objects survived.", "Your mum would be proud. 🥂"],
+  ["The bomb didn't win.", "Lucky. Very lucky. 💣"],
+  ["The wind bowed down.", "Even nature respects the tray. 🌬️"],
+  ["Two bombs. Zero deaths.", "You absolute maniac. 💣💣"],
+  ["Survived the rain.", "The tray is soaking, but so is your dignity. 🌧️"],
+  ["ALL TEN LEVELS!", "You are the Bar God. 🏆"],
+];
+const GAME_OVER_MSGS = [
+  "The floor got thirsty.",
+  "That's why we use plastic cups.",
+  "The drinks filed a complaint.",
+  "Sir, this is a bar, not a slip-n-slide.",
+  "Bold strategy. Chaos, but bold.",
+  "The mop is already on its way.",
+  "You had one job. ONE.",
+  "Gravity: 1 — You: 0.",
+  "The piccione sends its regards.",
+  "BOOM. Literally.",
+];
+
+// ─────────────────────────────────────────────
+//  STATE
+// ─────────────────────────────────────────────
+let engine, render, runner, tray, trayPivotConstraint;
+let items = [];
+let currentLevelIdx = 0;
+let spawnedCount = 0;
+let isGameOver = false;
+let isCountingDown = false;
+let spawnTimer = null;
+let countTimer = null;
+let mouseX = W / 2;
+let smoothX = W / 2;
+let lastSpawnX = W / 2;
+let trayAngle = 0;
+
+let score = 0;
+let bestScore = parseInt(localStorage.getItem('barbalance_best') || '0');
+let landedItems = [];      // tracks which items have landed (for score + game over screen)
+let particles  = [];       // visual particle bursts
+let nextItemDef = null;    // pre-picked next item def (shown as preview)
+let vignetteAlpha = 0;     // red vignette intensity (danger feedback)
+let bombTimers    = [];    // active bomb countdowns: { body, timeLeft, interval }
+
+// Level special state
+let windForce = 0;         // pixels/s lateral force (L7)
+let windDirection = 1;     // 1=right, -1=left
+let isRaining = false;     // L9 rain flag
+let rainDrops = [];        // visual rain particles
+let bombGuaranteed = false; // L6: one bomb guaranteed
+let bombGuaranteedSpawned = false;
+let pigeonGuaranteed = false; // legacy — unused now
+let pigeonGuaranteedSpawned = false;
+// L8 double bomb
+let doubleBombSlots = [];     // two spawn indices that are bombs
+let doubleBombSpawned = 0;    // how many of the two have been spawned
+// L9: 1 in 5 chance of bomb
+let rainBombChance = false;
+let rainBombSpawned = false;
+// L10: extreme mode state
+let extremeUsedIds = [];
+let extremeBeerIncluded = false;
+let extremePigeonSlot = -1;
+
+const { Engine, Render, Runner, Bodies, Body, Composite, Events, Constraint, Vector } = Matter;
+
+// ─────────────────────────────────────────────
+//  ITEM DEFINITIONS
+// ─────────────────────────────────────────────
+// minLevel: the level index from which this item can appear (0-based)
+// skins: array of skin IDs — one is picked randomly at spawn time
+const ITEM_DEFS = [
+  // ── ORIGINAL 6 (available from L1) ───────────────────────────────────────
+  { id:'calice',    label:'Wine Glass',      w:32, h:72,  physH:63, density:0.004, score:150, minLevel:0,
+    skins:['calice','calice_bordeaux'] },
+  { id:'boccale',   label:'Beer Mug',        w:50, h:68,  density:0.010, score:300, minLevel:0,
+    skins:['boccale','boccale_rossa'] },
+  { id:'cocktail',  label:'Cocktail',        w:40, h:58,  physH:50, density:0.005, score:200, minLevel:0,
+    skins:['cocktail','cocktail_blue'] },
+  { id:'acqua',     label:'Water Bottle',    w:26, h:78,  density:0.006, score:100, minLevel:0,
+    skins:['acqua','acqua_frizzante'] },
+  { id:'birra',     label:'Beer Bottle',     w:24, h:88,  density:0.007, score:250, minLevel:0,
+    skins:['birra','birra_artigianale'] },
+  { id:'chupito',   label:'Shot Glass',      w:20, h:36,  density:0.003, score: 75, minLevel:0,
+    skins:['chupito','chupito_assenzio','chupito_blu'] },
+
+  // ── NEW DRINKS (level-gated) ──────────────────────────────────────────────
+  // L4+: Highball (whisky & cola — tall cylindrical glass)
+  { id:'highball',  label:'Highball',        w:28, h:80,  density:0.007, score:220, minLevel:3,
+    skins:['highball'] },
+  // L4+: Grappa (small tulip-shaped digestivo bottle)
+  { id:'grappa',    label:'Grappa',          w:22, h:70,  density:0.005, score:180, minLevel:3,
+    skins:['grappa'] },
+  // L5+: Prosecco flute (tall, narrow champagne flute)
+  { id:'prosecco',  label:'Prosecco',        w:18, h:73,  physH:53, density:0.004, score:260, minLevel:4,
+    skins:['prosecco'] },
+  // L7+: Spritz (aperol spritz — rocks glass with orange slice)
+  { id:'spritz',    label:'Spritz',          w:38, h:52,  density:0.008, score:210, minLevel:6,
+    skins:['spritz'] },
+  // L7+: Amaro (digestivo bottle — dark, squat, heavy)
+  { id:'amaro',     label:'Amaro',           w:30, h:76,  density:0.009, score:240, minLevel:6,
+    skins:['amaro'] },
+];
+
+// Special hazard items
+const HAZARD_DEFS = [
+  { id:'piccione', label:'Pigeon',    w:38, h:30, density:0.006, score:0,
+    restitution:0.05, friction:0.7, skins:['piccione'] },
+  { id:'bomba',    label:'Bomb',      w:36, h:36, density:0.005, score:0,
+    restitution:0.92, friction:0.05, isBomb:true, skins:['bomba'] },
+];
+
+// ─────────────────────────────────────────────
+//  INIT ENGINE
+// ─────────────────────────────────────────────
+function initEngine() {
+  // Gravity increases with level: 1.2 → 1.8 by level 10
+  const gravityScale = 1.2 + currentLevelIdx * 0.07;
+  engine = Engine.create({
+    gravity: { y: gravityScale },
+    positionIterations: 10,   // default 6 — more = less tunneling
+    velocityIterations: 8,    // default 4 — more = more accurate collisions
+    constraintIterations: 4,  // default 2
+  });
+
+  const container = document.getElementById('game-wrap');
+  // Remove old canvas if any
+  const old = container.querySelector('canvas');
+  if (old) old.remove();
+
+  render = Render.create({
+    element: container,
+    engine,
+    options: { width: W, height: H, wireframes: false, background: 'transparent' }
+  });
+
+  runner = Runner.create();
+
+  // Mouse / Touch tracking
+  const updateMouse = (e) => {
+    e.preventDefault();
+    const rect = render.canvas.getBoundingClientRect();
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    mouseX = (cx - rect.left) * (W / rect.width);
+    mouseX = Math.max(40, Math.min(W - 40, mouseX));
+  };
+  render.canvas.addEventListener('mousemove', updateMouse);
+  render.canvas.addEventListener('touchmove', updateMouse, { passive: false });
+
+  // Physics: move the pivot point under the tray smoothly
+  Events.on(engine, 'beforeUpdate', physicsUpdate);
+
+  // Render hook: draw hand, check loss
+  Events.on(render, 'afterRender', afterRender);
+
+  Render.run(render);
+  Runner.run(runner, engine);
+}
+
+// ─────────────────────────────────────────────
+//  SETUP LEVEL
+// ─────────────────────────────────────────────
+function setupLevel() {
+  // Clear world
+  Composite.clear(engine.world);
+  items = [];
+  landedItems = [];
+  particles = [];
+  bombTimers.forEach(bt => clearInterval(bt.interval));
+  bombTimers = [];
+  spawnedCount = 0;
+  isGameOver = false;
+  isCountingDown = false;
+
+  // Reset special level state
+  const cfg = LEVEL_CONFIGS[currentLevelIdx];
+  const special = cfg ? cfg.special : null;
+  windForce = 0;
+  isRaining = false;
+  rainDrops = [];
+  bombGuaranteed = false;
+  bombGuaranteedSpawned = false;
+  pigeonGuaranteed = false;
+  pigeonGuaranteedSpawned = false;
+  doubleBombSlots = [];
+  doubleBombSpawned = 0;
+  rainBombChance = false;
+  rainBombSpawned = false;
+  extremeUsedIds = [];
+  extremeBeerIncluded = false;
+  extremePigeonSlot = -1;
+  delete window._bombSlot;
+  delete window._pigeonSlot;
+  delete window._rainBombSlot;
+
+  if (special === 'bomb_guaranteed') {
+    bombGuaranteed = true;
+    // Random slot from 1..4 (not first)
+    window._bombSlot = 1 + Math.floor(Math.random() * (cfg.count - 1));
+  }
+  if (special === 'wind') {
+    windDirection = Math.random() < 0.5 ? 1 : -1;
+    windForce = 0.000275; // applied as acceleration per tick
+  }
+  if (special === 'pigeon') {
+    pigeonGuaranteed = true;
+    window._pigeonSlot = 1 + Math.floor(Math.random() * (cfg.count - 1));
+  }
+  if (special === 'double_bomb') {
+    // Pick 2 distinct random slots (not both at slot 0 to avoid immediate bomb)
+    const slots = [];
+    while (slots.length < 2) {
+      const s = Math.floor(Math.random() * cfg.count);
+      if (!slots.includes(s)) slots.push(s);
+    }
+    doubleBombSlots = slots;
+    doubleBombSpawned = 0;
+  }
+  if (special === 'rain') {
+    isRaining = true;
+    rainBombChance = Math.random() < 0.20; // 1 in 5
+    if (rainBombChance) {
+      window._rainBombSlot = Math.floor(Math.random() * cfg.count);
+    }
+  }
+  if (special === 'extreme') {
+    // 1/6 chance of pigeon (one of 6 slots)
+    if (Math.random() < (1/6)) {
+      extremePigeonSlot = Math.floor(Math.random() * cfg.count);
+    }
+    // Boccale must appear: reserve a random slot (different from pigeon)
+    let beerSlot;
+    do { beerSlot = Math.floor(Math.random() * cfg.count); }
+    while (beerSlot === extremePigeonSlot);
+    window._extremeBeerSlot = beerSlot;
+  }
+
+  // Update gravity for new level
+  if (engine) {
+    engine.gravity.y = 1.2 + currentLevelIdx * 0.10;
+  }
+  clearInterval(spawnTimer);
+  clearInterval(countTimer);
+  smoothX = W / 2;
+  trayAngle = 0;
+  vignetteAlpha = 0;
+  // Score persists across levels; only reset on full game reset (resetGame)
+  nextItemDef = pickRandomDef(); // pre-pick first preview
+
+  // UI
+  document.getElementById('hud').style.display      = 'flex';
+  document.getElementById('score-bar').style.display = 'flex';
+  document.getElementById('countdown-wrap').style.display = 'none';
+  document.getElementById('gameover-screen').style.display = 'none';
+  document.getElementById('win-screen').style.display = 'none';
+  document.getElementById('tilt-warn').classList.remove('show');
+  updateHUD();
+
+  // No side walls — items must be kept on tray, can fall off any edge
+
+  // TRAY — kinematic body (very high mass but we set position manually)
+  // Rain level: reduced friction to simulate slippery tray
+  const trayFriction = (LEVEL_CONFIGS[currentLevelIdx]?.special === 'rain') ? 0.35 : 0.9;
+  const trayFrictionStatic = (LEVEL_CONFIGS[currentLevelIdx]?.special === 'rain') ? 0.40 : 1.0;
+  // Physics tray is taller than visual (28px vs 14px) to prevent small items tunneling through
+  const TRAY_PHYS_H = 28;
+  tray = Bodies.rectangle(W/2, TRAY_Y, TRAY_W, TRAY_PHYS_H, {
+    label: 'tray',
+    friction: trayFriction,
+    frictionStatic: trayFrictionStatic,
+    restitution: 0.01,
+    density: 1.2,
+    render: { fillStyle: 'transparent' },
+    collisionFilter: { category: 0x0001, mask: 0x0002 }
+  });
+  Body.setStatic(tray, false);
+  Composite.add(engine.world, tray);
+
+  // Start spawning
+  startSpawning();
+}
+
+// ─────────────────────────────────────────────
+//  PHYSICS UPDATE (runs every tick)
+// ─────────────────────────────────────────────
+// Design: the tray angle changes SLOWLY via lerp — it "drifts" toward
+// the imbalance rather than reacting instantly. Collisions from Matter
+// are neutralized by zeroing angular velocity every tick, so a falling
+// bottle doesn't cause a violent spin. The lean builds up gradually,
+// giving the player time to compensate.
+
+function physicsUpdate() {
+  if (isGameOver || !tray) return;
+
+  smoothX += (mouseX - smoothX) * 0.12;
+  Body.setPosition(tray, { x: smoothX, y: TRAY_Y });
+  Body.setVelocity(tray, { x: 0, y: 0 });
+  Body.setAngularVelocity(tray, 0);
+
+  // ── Wind force (L7) ───────────────────────────────────────────────────────
+  if (windForce > 0) {
+    // Occasionally gust direction change (every ~5s at 60fps = ~300 frames)
+    if (Math.random() < 0.003) windDirection *= -1;
+    items.forEach(item => {
+      // Apply to all items (in flight and landed) for stronger effect
+      Body.applyForce(item, item.position, {
+        x: windDirection * windForce * item.mass,
+        y: 0
+      });
+    });
+  }
+
+  // ── Anti-tunneling: cap vertical velocity of items to their own half-height ──
+  items.forEach(item => {
+    const maxVy = (item._def ? item._def.h : 20) * 0.8;
+    if (item.velocity.y > maxVy) {
+      Body.setVelocity(item, { x: item.velocity.x, y: maxVy });
+    }
+  });
+
+  // ── Landing detection ────────────────────────────────────────────────────
+  items.forEach(item => {
+    if (item._landed) return;
+    const dy    = item.position.y - tray.position.y;
+    const speed = Math.sqrt(item.velocity.x**2 + item.velocity.y**2);
+    const onTray = dy > -item._def.h && dy < 20 &&
+                   speed < 1.5 &&
+                   Math.abs(item.position.x - tray.position.x) < TRAY_W / 2 + 10;
+    if (!onTray) return;
+
+    item._landed = true;
+
+    if (item._def.isBomb && !item._bombLit) {
+      // Bomb lands → start 5s fuse
+      item._bombLit = true;
+      item._bombTime = 5;
+      spawnFloatingText('💣 5s!', item.position.x, item.position.y - 30, '#ff4444');
+      const bt = {
+        body: item,
+        timeLeft: 5,
+        interval: setInterval(() => {
+          bt.timeLeft--;
+          item._bombTime = bt.timeLeft;
+          if (bt.timeLeft <= 0) {
+            clearInterval(bt.interval);
+            // If bomb is still on tray → BOOM
+            const stillNear = Math.abs(item.position.x - tray.position.x) < TRAY_W / 2 + 30 &&
+                              item.position.y < H + 100;
+            if (stillNear && !isGameOver) explodeBomb(item);
+          }
+        }, 1000)
+      };
+      bombTimers.push(bt);
+    } else if (!item._def.isBomb && item._def.id !== 'piccione') {
+      // Normal drink lands → award score
+      landedItems.push(item._def);
+      awardScore(item._def, item.position);
+      spawnLandParticles(item.position.x, item.position.y - item._def.h / 2, item._def);
+    }
+  });
+
+  // ── Weight imbalance → target angle ──────────────────────────────────
+  let totalMass = 0, weightedX = 0;
+  items.forEach(item => {
+    const dy = item.position.y - tray.position.y;
+    if (dy > -200 && dy < 80) {
+      weightedX += (item.position.x - tray.position.x) * item.mass;
+      totalMass  += item.mass;
+    }
+  });
+  const comOffset   = totalMass > 0 ? weightedX / totalMass : 0;
+  // Tilt sensitivity increases slightly with level
+  const sensitivity = 0.010 + currentLevelIdx * 0.001;
+  const targetAngle = Math.max(-0.44, Math.min(0.44, comOffset * sensitivity));
+
+  // Lerp speed also increases with level: 0.008 → 0.016 by level 10
+  const lerpSpeed = 0.008 + currentLevelIdx * 0.0008;
+  trayAngle += (targetAngle - trayAngle) * lerpSpeed;
+  Body.setAngle(tray, trayAngle);
+
+  // ── Particle physics ──────────────────────────────────────────────────
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x  += p.vx;
+    p.y  += p.vy;
+    p.vy += 0.18;  // mini gravity
+    p.life -= 1;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  BOMB EXPLOSION
+// ─────────────────────────────────────────────
+function explodeBomb(bombBody) {
+  if (isGameOver) return;
+  isGameOver = true; // prevent double trigger
+  // Stop game timers immediately
+  clearInterval(spawnTimer);
+  clearInterval(countTimer);
+  document.getElementById('countdown-wrap').style.display = 'none';
+  document.getElementById('tilt-warn').classList.remove('show');
+  // Big explosion particle burst
+  const x = bombBody.position.x, y = bombBody.position.y;
+  for (let i = 0; i < 40; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 6;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 3,
+      life: 35 + Math.random() * 20,
+      maxLife: 55,
+      size: 3 + Math.random() * 5,
+      color: Math.random() < 0.5 ? '#ff6600' : (Math.random() < 0.5 ? '#ffcc00' : '#ff2200')
+    });
+  }
+  // Override game over message
+  const quipEl = document.getElementById('go-quip');
+  if (quipEl) quipEl.innerText = '"BOOM. That\'s on you."';
+
+  // Start explosion transition, then trigger game over
+  startExplosionTransition(function() { triggerGameOver(true); });
+}
+
+function startExplosionTransition(onComplete) {
+  const canvas = document.getElementById('explosion-transition');
+  if (!canvas) { onComplete && onComplete(); return; }
+  const wrap = document.getElementById('game-wrap');
+  const W2 = wrap.offsetWidth || 420;
+  const H2 = wrap.offsetHeight || 630;
+  canvas.width = W2; canvas.height = H2;
+  canvas.style.display = 'block';
+  const ctx2 = canvas.getContext('2d');
+
+  // Screen shake during explosion
+  wrap.style.animation = 'none';
+  const sSt = document.createElement('style');
+  sSt.innerText = '@keyframes bigShake{0%,100%{transform:translate(0,0)}10%{transform:translate(-12px,-8px)}20%{transform:translate(14px,6px)}30%{transform:translate(-10px,10px)}40%{transform:translate(12px,-6px)}50%{transform:translate(-8px,8px)}60%{transform:translate(10px,-10px)}70%{transform:translate(-6px,6px)}80%{transform:translate(8px,-4px)}90%{transform:translate(-4px,4px)}}';
+  document.head.appendChild(sSt);
+  wrap.style.animation = 'bigShake 0.7s ease';
+  setTimeout(function() { wrap.style.animation = ''; }, 700);
+
+  // Fireballs
+  const balls = [];
+  for (let i = 0; i < 18; i++) {
+    const angle = (Math.PI * 2 / 18) * i + Math.random() * 0.3;
+    const speed = 3 + Math.random() * 5;
+    balls.push({
+      x: W2 / 2 + (Math.random() - 0.5) * 80,
+      y: H2 / 2 + (Math.random() - 0.5) * 80,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1,
+      r: 12 + Math.random() * 20,
+      life: 1.0, decay: 0.025 + Math.random() * 0.015,
+    });
+  }
+  // Fire particles
+  const sparks = [];
+  for (let i = 0; i < 80; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 9;
+    sparks.push({
+      x: W2 / 2, y: H2 / 2,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 4,
+      life: 1.0, decay: 0.02 + Math.random() * 0.025,
+      size: 2 + Math.random() * 4,
+      color: Math.random() < 0.6 ? '#ff6600' : (Math.random() < 0.5 ? '#ffcc00' : '#ff2200'),
+    });
+  }
+  let fillAlpha = 0;
+  let frame = 0;
+  const totalFrames = 55;
+
+  function draw() {
+    frame++;
+    ctx2.clearRect(0, 0, W2, H2);
+    const prog = frame / totalFrames;
+
+    // White/orange flash at start
+    if (frame <= 8) {
+      const flashA = (1 - frame / 8) * 0.9;
+      ctx2.fillStyle = 'rgba(255,200,80,' + flashA + ')';
+      ctx2.fillRect(0, 0, W2, H2);
+    }
+
+    // Draw fireballs
+    balls.forEach(function(b) {
+      b.x += b.vx; b.vx *= 0.95;
+      b.y += b.vy; b.vy += 0.15;
+      b.life -= b.decay;
+      if (b.life <= 0) return;
+      const gr = ctx2.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * b.life);
+      gr.addColorStop(0, 'rgba(255,255,180,' + b.life.toFixed(2) + ')');
+      gr.addColorStop(0.4, 'rgba(255,120,0,' + (b.life * 0.9).toFixed(2) + ')');
+      gr.addColorStop(1, 'rgba(200,0,0,0)');
+      ctx2.beginPath();
+      ctx2.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      ctx2.fillStyle = gr;
+      ctx2.fill();
+    });
+
+    // Draw sparks
+    sparks.forEach(function(sp) {
+      sp.x += sp.vx; sp.vx *= 0.96;
+      sp.y += sp.vy; sp.vy += 0.25;
+      sp.life -= sp.decay;
+      if (sp.life <= 0) return;
+      ctx2.beginPath();
+      ctx2.arc(sp.x, sp.y, sp.size * sp.life, 0, Math.PI * 2);
+      ctx2.fillStyle = sp.color;
+      ctx2.globalAlpha = sp.life;
+      ctx2.fill();
+      ctx2.globalAlpha = 1;
+    });
+
+    // Fade to dark at end
+    if (prog > 0.55) {
+      fillAlpha = Math.min(1, (prog - 0.55) / 0.45);
+      ctx2.fillStyle = 'rgba(0,0,0,' + fillAlpha.toFixed(2) + ')';
+      ctx2.fillRect(0, 0, W2, H2);
+    }
+
+    if (frame < totalFrames) {
+      requestAnimationFrame(draw);
+    } else {
+      canvas.style.display = 'none';
+      ctx2.clearRect(0, 0, W2, H2);
+      onComplete && onComplete();
+    }
+  }
+  draw();
+}
+function awardScore(def, pos) {
+  const pts = def.score;
+  score += pts;
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('barbalance_best', bestScore);
+  }
+  updateHUD();
+  // Floating +pts text
+  spawnFloatingText('+' + pts, pos.x, pos.y - 20, def.id === 'boccale' ? '#f0b429' : '#fff');
+}
+
+// ─────────────────────────────────────────────
+//  PARTICLES
+// ─────────────────────────────────────────────
+// Colour palette per item type (used for landing particles)
+const ITEM_COLORS = {
+  calice:'#c0392b',       calice_bordeaux:'#6a0d2e',
+  boccale:'#f0a020',      boccale_rossa:'#c0291a',
+  cocktail:'#ff3d9a',     cocktail_blue:'#3db8ff',
+  acqua:'#3498db',        acqua_frizzante:'#5bc8e8',
+  birra:'#3a5c22',        birra_artigianale:'#7a4a1a',
+  chupito:'#f0b429',      chupito_assenzio:'#39ff14', chupito_blu:'#4169e1',
+  highball:'#b8860b',
+  grappa:'#e8e0d0',
+  prosecco:'#f5e642',
+  spritz:'#ff7f28',
+  amaro:'#2a1a0a',
+  piccione:'#aaaaaa',     bomba:'#222222'
+};
+
+// cl per item (for spilled liquid display)
+const ITEM_CL = {
+  calice:15,        calice_bordeaux:15,
+  boccale:50,       boccale_rossa:50,
+  cocktail:12,      cocktail_blue:12,
+  acqua:50,         acqua_frizzante:50,
+  birra:33,         birra_artigianale:33,
+  chupito:4,        chupito_assenzio:4,  chupito_blu:4,
+  highball:20,      grappa:4,
+  prosecco:10,      spritz:20,           amaro:4,
+  piccione:0,       bomba:0,
+};
+const TIPPED_PENALTY_PTS = 100;
+
+function spawnLandParticles(x, y, def) {
+  const skinKey = def._skin || def.id;
+  const col = ITEM_COLORS[skinKey] || ITEM_COLORS[def.id] || '#fff';
+  const count = def.id === 'boccale' ? 18 : 10;
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.random() * Math.PI * 2);
+    const speed = 1.5 + Math.random() * 3;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      life: 28 + Math.random() * 14,
+      maxLife: 42,
+      size: 2 + Math.random() * 3,
+      color: col
+    });
+  }
+}
+
+// Floating score text pool
+const floatingTexts = [];
+function spawnFloatingText(text, x, y, color) {
+  floatingTexts.push({ text, x, y, vy: -1.2, life: 50, color });
+}
+
+// ─────────────────────────────────────────────
+//  NEXT ITEM PREVIEW
+// ─────────────────────────────────────────────
+function updateNextPreview() {
+  const el = document.getElementById('next-preview-label');
+  if (el && nextItemDef) el.innerText = nextItemDef.label.toUpperCase();
+}
+
+// ─────────────────────────────────────────────
+//  AFTER RENDER
+// ─────────────────────────────────────────────
+function afterRender() {
+  if (isGameOver) return;
+  drawScene();
+  checkLoseCondition();
+}
+
+function drawScene() {
+  const ctx = render.context;
+
+  // Background gradient
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#12101e');
+  bg.addColorStop(1, '#1a1428');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Background PNG overlay at 50% opacity
+  if (window._bgImg && window._bgImg.complete && window._bgImg.naturalWidth > 0) {
+    ctx.globalAlpha = 0.5;
+    ctx.drawImage(window._bgImg, 0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+
+  // Subtle ambient light dots in background
+  ctx.fillStyle = 'rgba(255,200,80,0.03)';
+  for(let i=0;i<6;i++){
+    ctx.beginPath();
+    ctx.arc(60+i*60, 80+i*30, 40, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // Bar counter at bottom
+  ctx.fillStyle = '#2a1f10';
+  ctx.fillRect(0, HAND_Y - 20, W, H - HAND_Y + 20);
+  ctx.fillStyle = '#3d2b12';
+  ctx.fillRect(0, HAND_Y - 20, W, 18);
+  // wood grain lines
+  for (let i = 0; i < W; i += 22) {
+    ctx.strokeStyle = 'rgba(0,0,0,.18)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(i, HAND_Y - 20); ctx.lineTo(i + 8, H); ctx.stroke();
+  }
+
+  // Floor glow under hand
+  const glow = ctx.createRadialGradient(smoothX, HAND_Y - 10, 0, smoothX, HAND_Y - 10, 160);
+  glow.addColorStop(0, 'rgba(240,180,41,0.12)');
+  glow.addColorStop(1, 'rgba(240,180,41,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, HAND_Y - 30, W, H);
+
+  // ARM
+  drawArm(ctx, smoothX, HAND_Y, W / 2, H + 60);
+
+  // Items — each with iconic shape
+  items.forEach(item => {
+    if (!item._def) return;
+    const p = item.position;
+    const a = item.angle;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(a);
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetX = 3; ctx.shadowOffsetY = 3;
+    drawItem(ctx, item._def);
+    ctx.shadowColor = 'transparent';
+    ctx.restore();
+    // Bomb countdown drawn in world space (not rotated)
+    if (item._def.isBomb) drawBombTimer(ctx, item);
+  });
+
+  // TRAY (drawn on top so it visually overlaps items resting on it)
+  drawTray(ctx);
+
+  // ── Particles ─────────────────────────────────────────────────────────
+  particles.forEach(p => {
+    const alpha = p.life / p.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // ── Floating score texts ───────────────────────────────────────────────
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const t = floatingTexts[i];
+    t.y  += t.vy;
+    t.life -= 1;
+    if (t.life <= 0) { floatingTexts.splice(i, 1); continue; }
+    ctx.globalAlpha = Math.min(1, t.life / 20);
+    ctx.fillStyle = t.color;
+    ctx.font = "bold 18px 'Bebas Neue', sans-serif";
+    ctx.textAlign = 'center';
+    ctx.fillText(t.text, t.x, t.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'left';
+
+  // ── Rain effect (L9) ─────────────────────────────────────────────────────
+  if (isRaining) {
+    drawRain(ctx);
+  }
+
+  // ── Wind indicator (L7) ───────────────────────────────────────────────────
+  if (windForce > 0) {
+    drawWindIndicator(ctx);
+  }
+
+  // ── Next item preview (top-right ghost) ───────────────────────────────
+  drawNextPreview(ctx);
+
+  // ── Danger vignette ───────────────────────────────────────────────────
+  if (vignetteAlpha > 0) {
+    const vg = ctx.createRadialGradient(W/2, H/2, H*0.28, W/2, H/2, H*0.78);
+    vg.addColorStop(0, 'rgba(220,30,30,0)');
+    vg.addColorStop(1, `rgba(220,30,30,${vignetteAlpha.toFixed(2)})`);
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+// ── MASTER ITEM DISPATCHER ──────────────────────────────────────────────────
+function drawItem(ctx, def) {
+  const skin = def._skin || def.id;
+
+  // physH = reduced physics body height. Visual is taller (def.h).
+  // Shift visual DOWN by (h - physH)/2 so the visual base lines up with
+  // the physics body bottom, eliminating the floating gap.
+  const drawOffsetY = def.physH ? (def.h - def.physH) / 2 : 0;
+  if (drawOffsetY) { ctx.save(); ctx.translate(0, drawOffsetY); }
+
+  switch(skin) {
+    // ── Original skins ──
+    case 'calice':          drawCalice(ctx, def); break;
+    case 'calice_bordeaux': drawCaliceBordeaux(ctx, def); break;
+    case 'boccale':         drawBoccale(ctx, def); break;
+    case 'boccale_rossa':   drawBoccaleRossa(ctx, def); break;
+    case 'cocktail':        drawCocktail(ctx, def); break;
+    case 'cocktail_blue':   drawCocktailBlue(ctx, def); break;
+    case 'acqua':           drawAcqua(ctx, def); break;
+    case 'acqua_frizzante': drawAcquaFrizzante(ctx, def); break;
+    case 'birra':           drawBirraBottiglia(ctx, def); break;
+    case 'birra_artigianale': drawBirraArtigianale(ctx, def); break;
+    case 'chupito':         drawChupito(ctx, def); break;
+    case 'chupito_assenzio':drawChupitoAssenzio(ctx, def); break;
+    case 'chupito_blu':     drawChupitoBlu(ctx, def); break;
+    // ── New drinks ──
+    case 'highball':        drawHighball(ctx, def); break;
+    case 'grappa':          drawGrappa(ctx, def); break;
+    case 'prosecco':        drawProsecco(ctx, def); break;
+    case 'spritz':          drawSpritz(ctx, def); break;
+    case 'amaro':           drawAmaro(ctx, def); break;
+    // ── Hazards ──
+    case 'piccione':        drawPiccione(ctx, def); break;
+    case 'bomba':           drawBomba(ctx, def); break;
+    default:
+      drawItem(ctx, Object.assign({}, def, { _skin: def.id })); break;
+  }
+  if (drawOffsetY) ctx.restore();
+}
+
+// Particle color lookup including new items
+
+// ── PICCIONE ─────────────────────────────────────────────────────────────────
+function drawPiccione(ctx, d) {
+  const hw = d.w/2, hh = d.h/2;
+  ctx.save();
+  // Body — fat teardrop
+  ctx.beginPath();
+  ctx.ellipse(0, 2, hw*0.78, hh*0.72, 0, 0, Math.PI*2);
+  ctx.fillStyle = '#9e9e9e'; ctx.fill();
+  ctx.strokeStyle = '#555'; ctx.lineWidth = 1.2; ctx.stroke();
+
+  // Wing highlight
+  ctx.beginPath();
+  ctx.ellipse(-4, 0, hw*0.55, hh*0.45, -0.2, 0, Math.PI*2);
+  ctx.fillStyle = '#b8b8b8'; ctx.fill();
+
+  // Wing feather lines
+  ctx.strokeStyle = '#777'; ctx.lineWidth = 0.8;
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-hw*0.5 + i*5, hh*0.1);
+    ctx.lineTo(-hw*0.5 + i*5 + 2, hh*0.55);
+    ctx.stroke();
+  }
+
+  // Head
+  ctx.beginPath();
+  ctx.arc(hw*0.5, -hh*0.35, hh*0.32, 0, Math.PI*2);
+  ctx.fillStyle = '#8a8a8a'; ctx.fill();
+  ctx.strokeStyle = '#555'; ctx.lineWidth = 1; ctx.stroke();
+
+  // Iridescent neck patch
+  ctx.beginPath();
+  ctx.ellipse(hw*0.3, -hh*0.08, 8, 5, 0.3, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(100,180,120,0.55)'; ctx.fill();
+
+  // Eye
+  ctx.beginPath();
+  ctx.arc(hw*0.62, -hh*0.4, 2.5, 0, Math.PI*2);
+  ctx.fillStyle = '#1a1a1a'; ctx.fill();
+  ctx.beginPath();
+  ctx.arc(hw*0.63, -hh*0.41, 0.8, 0, Math.PI*2);
+  ctx.fillStyle = '#fff'; ctx.fill();
+
+  // Beak
+  ctx.beginPath();
+  ctx.moveTo(hw*0.85, -hh*0.38);
+  ctx.lineTo(hw*1.1,  -hh*0.30);
+  ctx.lineTo(hw*0.85, -hh*0.22);
+  ctx.closePath();
+  ctx.fillStyle = '#c8b040'; ctx.fill();
+
+  // Feet
+  ctx.strokeStyle = '#c8b040'; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+  [[-8, 1], [4, 1]].forEach(([fx]) => {
+    ctx.beginPath(); ctx.moveTo(fx, hh*0.85); ctx.lineTo(fx - 4, hh*1.05); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(fx, hh*0.85); ctx.lineTo(fx,     hh*1.1);  ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(fx, hh*0.85); ctx.lineTo(fx + 5, hh*1.05); ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// ── BOMBA ─────────────────────────────────────────────────────────────────────
+function drawBomba(ctx, d) {
+  const r = d.w / 2;
+  ctx.save();
+
+  // Main ball — glossy black
+  const ballGrad = ctx.createRadialGradient(-r*0.3, -r*0.3, r*0.05, 0, 0, r);
+  ballGrad.addColorStop(0,   '#666');
+  ballGrad.addColorStop(0.4, '#222');
+  ballGrad.addColorStop(1,   '#000');
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI*2);
+  ctx.fillStyle = ballGrad;
+  ctx.fill();
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  // Shine
+  ctx.beginPath();
+  ctx.ellipse(-r*0.28, -r*0.3, r*0.22, r*0.15, -0.5, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fill();
+
+  // Fuse rope (curved line from top)
+  ctx.beginPath();
+  ctx.moveTo(r*0.1, -r);
+  ctx.bezierCurveTo(r*0.3, -r*1.4, r*0.7, -r*1.5, r*0.55, -r*1.85);
+  ctx.strokeStyle = '#8B6914'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Fuse flame (always lit — animated via _bombTime)
+  ctx.beginPath();
+  ctx.arc(r*0.55, -r*1.88, 4, 0, Math.PI*2);
+  ctx.fillStyle = '#ff6600'; ctx.fill();
+  ctx.beginPath();
+  ctx.arc(r*0.55 + 1, -r*1.92, 2.5, 0, Math.PI*2);
+  ctx.fillStyle = '#ffdd00'; ctx.fill();
+
+  ctx.restore();
+}
+
+// Draw bomb countdown timer above the bomb body (called in drawScene items loop)
+function drawBombTimer(ctx, item) {
+  if (!item._bombLit || item._bombTime === undefined) return;
+  const p = item.position;
+  const t = item._bombTime;
+  const col = t <= 2 ? '#ff2200' : t <= 3 ? '#ff6600' : '#ffcc00';
+  ctx.save();
+  ctx.font = `bold ${t <= 2 ? 20 : 16}px 'Bebas Neue', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = col;
+  ctx.shadowColor = col; ctx.shadowBlur = 10;
+  ctx.fillText(t + 's', p.x, p.y - item._def.w / 2 - 8);
+  // Pulsing ring when critical
+  if (t <= 2) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, item._def.w / 2 + 4, 0, Math.PI*2);
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.globalAlpha = 0.6;
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+}
+
+// ── CALICE DI VINO ──────────────────────────────────────────────────────────
+// Goblet: wide rim → tapering body → thin stem → flat base
+function drawCalice(ctx, d) {
+  const hw = d.w/2, hh = d.h/2;
+  // Bowl (trapezoid, wider at top)
+  ctx.beginPath();
+  ctx.moveTo(-hw, -hh);           // top-left rim
+  ctx.lineTo( hw, -hh);           // top-right rim
+  ctx.lineTo( hw*0.45,  hh*0.15); // bottom-right of bowl
+  ctx.lineTo(-hw*0.45,  hh*0.15); // bottom-left of bowl
+  ctx.closePath();
+  // Wine fill
+  const wineGrad = ctx.createLinearGradient(-hw, -hh, hw, -hh);
+  wineGrad.addColorStop(0, '#7b1520');
+  wineGrad.addColorStop(0.4, '#c0392b');
+  wineGrad.addColorStop(1, '#7b1520');
+  ctx.fillStyle = wineGrad;
+  ctx.fill();
+  // Glass overlay (semi-transparent)
+  ctx.beginPath();
+  ctx.moveTo(-hw, -hh);
+  ctx.lineTo( hw, -hh);
+  ctx.lineTo( hw*0.45,  hh*0.15);
+  ctx.lineTo(-hw*0.45,  hh*0.15);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  // Rim highlight
+  ctx.beginPath();
+  ctx.moveTo(-hw+2, -hh+2);
+  ctx.lineTo(hw*0.6, -hh+2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // Stem
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fillRect(-2.5, hh*0.15, 5, hh*0.62);
+  // Base
+  ctx.beginPath();
+  ctx.ellipse(0, hh*0.77, hw*0.65, 4, 0, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fill();
+}
+
+// ── BOCCALE DI BIRRA ────────────────────────────────────────────────────────
+// Pint glass: slight taper, amber beer, white foam head, handle bump
+function drawBoccale(ctx, d) {
+  const hw = d.w/2, hh = d.h/2;
+  const foamH = hh * 0.22; // foam occupies top 22%
+
+  // Glass body (slightly wider at top)
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.82, -hh);
+  ctx.lineTo( hw*0.82, -hh);
+  ctx.lineTo( hw,       hh);
+  ctx.lineTo(-hw,       hh);
+  ctx.closePath();
+  // Beer gradient
+  const beerGrad = ctx.createLinearGradient(-hw, -hh, hw, 0);
+  beerGrad.addColorStop(0, '#d4820a');
+  beerGrad.addColorStop(0.5,'#f0a020');
+  beerGrad.addColorStop(1, '#c06010');
+  ctx.fillStyle = beerGrad;
+  ctx.fill();
+  // Glass shine overlay
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.fill();
+
+  // Foam — sits on top of beer
+  ctx.save();
+  ctx.clip(); // clip foam to glass shape
+  ctx.beginPath();
+  // Bumpy foam top
+  const foamY = -hh + foamH;
+  ctx.moveTo(-hw*0.82, -hh);
+  // left side up
+  for(let bx = -hw*0.78; bx <= hw*0.78; bx += 7) {
+    ctx.arc(bx, -hh + 5, 5, Math.PI, 0);
+  }
+  ctx.lineTo(hw*0.82, -hh);
+  ctx.lineTo(hw*0.82, foamY);
+  ctx.lineTo(-hw*0.82, foamY);
+  ctx.closePath();
+  ctx.fillStyle = '#f5f0e8';
+  ctx.fill();
+  ctx.restore();
+
+  // Glass outline
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.82, -hh);
+  ctx.lineTo( hw*0.82, -hh);
+  ctx.lineTo( hw,       hh);
+  ctx.lineTo(-hw,       hh);
+  ctx.closePath();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Handle (right side bump)
+  ctx.beginPath();
+  ctx.arc(hw + 7, -hh*0.1, 10, -Math.PI*0.6, Math.PI*0.6);
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 5;
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Glass highlight stripe
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.68, -hh + foamH + 4);
+  ctx.lineTo(-hw*0.45, -hh + foamH + 4);
+  ctx.lineTo(-hw*0.52, hh - 6);
+  ctx.lineTo(-hw*0.75, hh - 6);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// ── COCKTAIL (Martini-style) ─────────────────────────────────────────────────
+// Wide inverted triangle bowl, thin stem, flat base, umbrella straw
+function drawCocktail(ctx, d) {
+  const hw = d.w/2, hh = d.h/2;
+  const bowlBottom = hh * 0.05;
+  const stemTop = bowlBottom;
+  const stemBot = hh * 0.72;
+
+  // Bowl
+  ctx.beginPath();
+  ctx.moveTo(-hw, -hh);
+  ctx.lineTo( hw, -hh);
+  ctx.lineTo(0, bowlBottom);
+  ctx.closePath();
+  const cGrad = ctx.createLinearGradient(-hw,-hh, hw, 0);
+  cGrad.addColorStop(0,'#ff6eb0');
+  cGrad.addColorStop(0.5,'#ff3d9a');
+  cGrad.addColorStop(1,'#c4007a');
+  ctx.fillStyle = cGrad;
+  ctx.fill();
+  // Glass overlay
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  // Rim highlight
+  ctx.beginPath();
+  ctx.moveTo(-hw+3, -hh+3);
+  ctx.lineTo(hw*0.5, -hh+3);
+  ctx.strokeStyle='rgba(255,255,255,0.55)';
+  ctx.lineWidth=1.5; ctx.stroke();
+  // Stem
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  ctx.fillRect(-2, stemTop, 4, stemBot - stemTop);
+  // Base
+  ctx.beginPath();
+  ctx.ellipse(0, stemBot, hw*0.65, 4, 0, 0, Math.PI*2);
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  ctx.fill();
+  // Umbrella/straw
+  ctx.save();
+  ctx.translate(hw*0.3, -hh + 4);
+  // straw
+  ctx.strokeStyle='#f0b429'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-6, bowlBottom - 6); ctx.stroke();
+  // tiny umbrella
+  ctx.beginPath();
+  ctx.arc(0,0, 8, Math.PI, 0);
+  ctx.fillStyle='#ff6b35'; ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=0.8; ctx.stroke();
+  ctx.restore();
+}
+
+// ── ACQUA (plastic bottle) ──────────────────────────────────────────────────
+// Slim bottle with label band, cap, indentations
+function drawAcqua(ctx, d) {
+  const hw = d.w/2, hh = d.h/2;
+  const capH = hh * 0.12;
+  const neckH = hh * 0.14;
+  const neckW = hw * 0.55;
+  const bodyTop = -hh + capH + neckH;
+
+  // Bottle body
+  ctx.beginPath();
+  ctx.moveTo(-hw, bodyTop);
+  ctx.lineTo( hw, bodyTop);
+  ctx.lineTo( hw,  hh);
+  ctx.lineTo(-hw,  hh);
+  ctx.closePath();
+  const waterGrad = ctx.createLinearGradient(-hw, 0, hw, 0);
+  waterGrad.addColorStop(0, '#1a6fa8');
+  waterGrad.addColorStop(0.35,'#3498db');
+  waterGrad.addColorStop(0.65,'#5dade2');
+  waterGrad.addColorStop(1, '#1a6fa8');
+  ctx.fillStyle = waterGrad;
+  ctx.fill();
+
+  // Neck taper
+  ctx.beginPath();
+  ctx.moveTo(-neckW, -hh + capH);
+  ctx.lineTo( neckW, -hh + capH);
+  ctx.lineTo( hw, bodyTop);
+  ctx.lineTo(-hw, bodyTop);
+  ctx.closePath();
+  ctx.fillStyle='#2e86c1'; ctx.fill();
+
+  // Cap
+  ctx.beginPath();
+  ctx.moveTo(-neckW * 0.8, -hh);
+  ctx.lineTo( neckW * 0.8, -hh);
+  ctx.lineTo( neckW, -hh + capH);
+  ctx.lineTo(-neckW, -hh + capH);
+  ctx.closePath();
+  ctx.fillStyle='#f0b429'; ctx.fill(); // yellow cap
+  ctx.strokeStyle='#c8921a'; ctx.lineWidth=1; ctx.stroke();
+
+  // Label band
+  ctx.fillStyle='rgba(255,255,255,0.15)';
+  ctx.fillRect(-hw+1, -hh*0.15, d.w-2, hh*0.55);
+  // Label text hint
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.fillRect(-hw*0.7, -hh*0.05, hw*1.4, 2.5);
+  ctx.fillRect(-hw*0.7,  hh*0.1,  hw*1.4, 2.5);
+
+  // Indentation lines (plastic bottle details)
+  ctx.strokeStyle='rgba(0,0,0,0.12)'; ctx.lineWidth=1;
+  for(let iy = hh*0.38; iy < hh - 6; iy += hh*0.18){
+    ctx.beginPath(); ctx.moveTo(-hw+2, iy); ctx.lineTo(hw-2, iy); ctx.stroke();
+  }
+
+  // Highlight
+  ctx.fillStyle='rgba(255,255,255,0.22)';
+  ctx.fillRect(-hw+3, bodyTop+4, hw*0.45, hh*1.7);
+  // Bottle outline
+  ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(-hw, bodyTop); ctx.lineTo(-hw, hh); ctx.lineTo(hw, hh); ctx.lineTo(hw, bodyTop); ctx.stroke();
+}
+
+// ── BIRRA IN BOTTIGLIA ──────────────────────────────────────────────────────
+// Dark glass beer bottle: narrow neck, shoulder, body, label
+function drawBirraBottiglia(ctx, d) {
+  const hw = d.w/2, hh = d.h/2;
+  const capH  = hh * 0.08;
+  const neckH = hh * 0.30;
+  const neckW = hw * 0.42;
+  const shoulderH = hh * 0.12;
+  const bodyTop   = -hh + capH + neckH + shoulderH;
+
+  // Body — strictly within [-hh, +hh]
+  ctx.beginPath();
+  ctx.rect(-hw, bodyTop, d.w, hh - bodyTop);
+  const bottleGrad = ctx.createLinearGradient(-hw, 0, hw, 0);
+  bottleGrad.addColorStop(0,  '#1a2e1a');
+  bottleGrad.addColorStop(0.3,'#2e4d1e');
+  bottleGrad.addColorStop(0.6,'#3a5c22');
+  bottleGrad.addColorStop(1,  '#1a2e1a');
+  ctx.fillStyle = bottleGrad;
+  ctx.fill();
+
+  // Shoulder
+  ctx.beginPath();
+  ctx.moveTo(-neckW, -hh + capH + neckH);
+  ctx.lineTo( neckW, -hh + capH + neckH);
+  ctx.lineTo( hw,    bodyTop);
+  ctx.lineTo(-hw,    bodyTop);
+  ctx.closePath();
+  ctx.fillStyle='#243d18'; ctx.fill();
+
+  // Neck
+  ctx.fillStyle='#2e4d1e';
+  ctx.fillRect(-neckW, -hh + capH, neckW*2, neckH);
+
+  // Cap (crown cap — flat)
+  ctx.beginPath();
+  ctx.rect(-neckW*1.1, -hh, neckW*2.2, capH);
+  ctx.fillStyle='#c0392b'; ctx.fill();
+  ctx.strokeStyle='#922b21'; ctx.lineWidth=0.8; ctx.stroke();
+  // Crown notches
+  ctx.fillStyle='#e74c3c';
+  for(let nx=-neckW*0.9; nx<neckW*0.9; nx+=4){
+    ctx.fillRect(nx, -hh, 2, 2.5);
+  }
+
+  // Label
+  const labelTop = bodyTop + hh*0.10;
+  const labelH   = hh * 0.60;
+  ctx.fillStyle='#f0e8c8';
+  ctx.beginPath();
+  roundRect(ctx, -hw*0.82, labelTop, hw*1.64, labelH, 3);
+  ctx.fill();
+  // label stripes
+  ctx.fillStyle='#c0392b';
+  ctx.fillRect(-hw*0.82, labelTop, hw*1.64, labelH*0.28);
+  ctx.fillStyle='#1a2e1a';
+  ctx.fillRect(-hw*0.82, labelTop+labelH*0.28, hw*1.64, labelH*0.15);
+  // label text lines
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.fillRect(-hw*0.55, labelTop + labelH*0.52, hw*1.1, 2);
+  ctx.fillRect(-hw*0.4,  labelTop + labelH*0.68, hw*0.8, 2);
+
+  // Highlight — capped at hh
+  ctx.fillStyle='rgba(255,255,255,0.12)';
+  ctx.fillRect(-hw+2, bodyTop+4, hw*0.4, hh - bodyTop - 8);
+
+  // Outline
+  ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.rect(-hw, bodyTop, d.w, hh*2); ctx.stroke();
+}
+
+// ── CHUPITO (shot glass) ────────────────────────────────────────────────────
+// Small chunky shot glass, thick base, liquid inside
+function drawChupito(ctx, d) {
+  const hw = d.w/2, hh = d.h/2;
+  const baseH = hh * 0.28;
+
+  // Thick base
+  ctx.beginPath();
+  ctx.moveTo(-hw,  hh);
+  ctx.lineTo( hw,  hh);
+  ctx.lineTo( hw*0.88, hh - baseH);
+  ctx.lineTo(-hw*0.88, hh - baseH);
+  ctx.closePath();
+  ctx.fillStyle='rgba(255,255,255,0.45)';
+  ctx.fill();
+
+  // Glass body (slight taper wider at top)
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.78, -hh);
+  ctx.lineTo( hw*0.78, -hh);
+  ctx.lineTo( hw*0.88, hh - baseH);
+  ctx.lineTo(-hw*0.88, hh - baseH);
+  ctx.closePath();
+  // Liquid fill — tequila gold
+  const shotGrad = ctx.createLinearGradient(-hw, -hh, hw, 0);
+  shotGrad.addColorStop(0, '#c8860a');
+  shotGrad.addColorStop(0.5,'#f0b429');
+  shotGrad.addColorStop(1, '#c8860a');
+  ctx.fillStyle = shotGrad;
+  ctx.fill();
+  // glass tint overlay
+  ctx.fillStyle='rgba(255,255,255,0.10)';
+  ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.45)';
+  ctx.lineWidth=1.5;
+  ctx.stroke();
+
+  // Liquid surface
+  ctx.fillStyle='rgba(255,200,50,0.4)';
+  ctx.beginPath();
+  ctx.ellipse(0, -hh+3, hw*0.68, 3, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Highlight
+  ctx.fillStyle='rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.68, -hh + 4);
+  ctx.lineTo(-hw*0.42, -hh + 4);
+  ctx.lineTo(-hw*0.52, hh - baseH - 4);
+  ctx.lineTo(-hw*0.78, hh - baseH - 4);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SKIN VARIANTS — ORIGINAL ITEMS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── CALICE BORDEAUX — darker, rounder bowl, deep burgundy ────────────────────
+function drawCaliceBordeaux(ctx, d) {
+  const hw = d.w/2, hh = d.h/2;
+  // Bowl — slightly rounder using bezier
+  ctx.beginPath();
+  ctx.moveTo(-hw, -hh);
+  ctx.lineTo( hw, -hh);
+  ctx.bezierCurveTo(hw, -hh*0.2, hw*0.55, hh*0.1, hw*0.42, hh*0.15);
+  ctx.lineTo(-hw*0.42, hh*0.15);
+  ctx.bezierCurveTo(-hw*0.55, hh*0.1, -hw, -hh*0.2, -hw, -hh);
+  ctx.closePath();
+  const g = ctx.createLinearGradient(-hw, -hh, hw, -hh);
+  g.addColorStop(0, '#3d0015');
+  g.addColorStop(0.4, '#6a0d2e');
+  g.addColorStop(1, '#3d0015');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = 1.2; ctx.stroke();
+  // Rim highlight
+  ctx.beginPath(); ctx.moveTo(-hw+2,-hh+2); ctx.lineTo(hw*0.5,-hh+2);
+  ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=1.5; ctx.stroke();
+  // Stem + base
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  ctx.fillRect(-2.5, hh*0.15, 5, hh*0.62);
+  ctx.beginPath(); ctx.ellipse(0, hh*0.77, hw*0.65, 4, 0, 0, Math.PI*2);
+  ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.fill();
+}
+
+// ── BOCCALE ROSSA — doppio malto, 20% smaller, deep red ─────────────────────
+function drawBoccaleRossa(ctx, d) {
+  // Double malt — same size as regular boccale, darker red color
+  const hw = d.w/2, hh = d.h/2;
+  const foamH = hh * 0.18;
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.82,-hh); ctx.lineTo(hw*0.82,-hh);
+  ctx.lineTo(hw,hh); ctx.lineTo(-hw,hh); ctx.closePath();
+  const g = ctx.createLinearGradient(-hw,-hh,hw,0);
+  g.addColorStop(0,'#8b1a1a'); g.addColorStop(0.5,'#c0291a'); g.addColorStop(1,'#6a1010');
+  ctx.fillStyle=g; ctx.fill();
+  // Foam
+  ctx.save(); ctx.clip();
+  ctx.beginPath();
+  const foamY=-hh+foamH;
+  ctx.moveTo(-hw*0.82,-hh);
+  for(let bx=-hw*0.78;bx<=hw*0.78;bx+=7) ctx.arc(bx,-hh+5,5,Math.PI,0);
+  ctx.lineTo(hw*0.82,-hh); ctx.lineTo(hw*0.82,foamY);
+  ctx.lineTo(-hw*0.82,foamY); ctx.closePath();
+  ctx.fillStyle='#f0ece4'; ctx.fill(); ctx.restore();
+  // Glass outline
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.82,-hh); ctx.lineTo(hw*0.82,-hh);
+  ctx.lineTo(hw,hh); ctx.lineTo(-hw,hh); ctx.closePath();
+  ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1.5; ctx.stroke();
+  // Handle
+  ctx.beginPath(); ctx.arc(hw+7,-hh*0.1,10,-Math.PI*0.6,Math.PI*0.6);
+  ctx.strokeStyle='rgba(255,255,255,0.45)'; ctx.lineWidth=5; ctx.stroke();
+  ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=2; ctx.stroke();
+}
+
+// ── COCKTAIL BLU — gin tonic in martini glass ────────────────────────────────
+function drawCocktailBlue(ctx, d) {
+  const hw=d.w/2, hh=d.h/2;
+  const bowlBottom=hh*0.05, stemTop=bowlBottom, stemBot=hh*0.72;
+  ctx.beginPath();
+  ctx.moveTo(-hw,-hh); ctx.lineTo(hw,-hh); ctx.lineTo(0,bowlBottom); ctx.closePath();
+  const g=ctx.createLinearGradient(-hw,-hh,hw,0);
+  g.addColorStop(0,'#a0e8ff'); g.addColorStop(0.5,'#3db8ff'); g.addColorStop(1,'#0072cc');
+  ctx.fillStyle=g; ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=1.2; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-hw+3,-hh+3); ctx.lineTo(hw*0.5,-hh+3);
+  ctx.strokeStyle='rgba(255,255,255,0.55)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  ctx.fillRect(-2,stemTop,4,stemBot-stemTop);
+  ctx.beginPath(); ctx.ellipse(0,stemBot,hw*0.65,4,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.fill();
+  // Lime wedge on rim
+  ctx.save(); ctx.translate(-hw*0.25,-hh);
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,7,Math.PI*1.1,Math.PI*1.9);
+  ctx.closePath(); ctx.fillStyle='#6abf40'; ctx.fill();
+  ctx.strokeStyle='#3d8c1a'; ctx.lineWidth=0.8; ctx.stroke();
+  ctx.restore();
+  // Bubbles
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  [[0,-hh*0.5,2],[hw*0.2,-hh*0.25,1.5],[-hw*0.15,-hh*0.7,1]].forEach(([x,y,r])=>{
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  });
+}
+
+// ── ACQUA FRIZZANTE — San Pellegrino/Ferrarelle palette ─────────────────────
+function drawAcquaFrizzante(ctx, d) {
+  const hw=d.w/2, hh=d.h/2;
+  const capH=hh*0.12, neckH=hh*0.14, neckW=hw*0.55;
+  const bodyTop=-hh+capH+neckH;
+  // Body — green glass
+  ctx.beginPath();
+  ctx.moveTo(-hw,bodyTop); ctx.lineTo(hw,bodyTop);
+  ctx.lineTo(hw,hh); ctx.lineTo(-hw,hh); ctx.closePath();
+  const g=ctx.createLinearGradient(-hw,0,hw,0);
+  g.addColorStop(0,'#1a5c2a'); g.addColorStop(0.35,'#2e8a40'); g.addColorStop(0.65,'#4aad5c'); g.addColorStop(1,'#1a5c2a');
+  ctx.fillStyle=g; ctx.fill();
+  // Neck taper
+  ctx.beginPath();
+  ctx.moveTo(-neckW,-hh+capH); ctx.lineTo(neckW,-hh+capH);
+  ctx.lineTo(hw,bodyTop); ctx.lineTo(-hw,bodyTop); ctx.closePath();
+  ctx.fillStyle='#1e6e30'; ctx.fill();
+  // Cap — red
+  ctx.beginPath();
+  ctx.moveTo(-neckW*0.8,-hh); ctx.lineTo(neckW*0.8,-hh);
+  ctx.lineTo(neckW,-hh+capH); ctx.lineTo(-neckW,-hh+capH); ctx.closePath();
+  ctx.fillStyle='#e01020'; ctx.fill();
+  ctx.strokeStyle='#a00010'; ctx.lineWidth=1; ctx.stroke();
+  // Label — white with red stripe (San Pellegrino style)
+  ctx.fillStyle='rgba(255,255,255,0.9)';
+  ctx.fillRect(-hw*0.82,bodyTop+hh*0.08,hw*1.64,hh*0.55);
+  ctx.fillStyle='#e01020';
+  ctx.fillRect(-hw*0.82,bodyTop+hh*0.08,hw*1.64,hh*0.14);
+  // Bubbles on label
+  ctx.fillStyle='rgba(46,138,64,0.5)';
+  [[-6,bodyTop+hh*0.3,3],[4,bodyTop+hh*0.42,2],[0,bodyTop+hh*0.55,2.5]].forEach(([x,y,r])=>{
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  });
+  // Highlight
+  ctx.fillStyle='rgba(255,255,255,0.18)';
+  ctx.fillRect(-hw+3,bodyTop+4,hw*0.42,hh*1.75);
+  ctx.strokeStyle='rgba(255,255,255,0.2)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.rect(-hw,bodyTop,d.w,hh*2); ctx.stroke();
+}
+
+// ── BIRRA ARTIGIANALE — craft IPA bottle, orange label ───────────────────────
+function drawBirraArtigianale(ctx, d) {
+  const hw=d.w/2, hh=d.h/2;
+  const capH=hh*0.08, neckH=hh*0.30, neckW=hw*0.42, shoulderH=hh*0.12;
+  const bodyTop=-hh+capH+neckH+shoulderH;
+  // Body — amber/brown
+  ctx.beginPath(); ctx.rect(-hw,bodyTop,d.w,hh-bodyTop);
+  const g=ctx.createLinearGradient(-hw,0,hw,0);
+  g.addColorStop(0,'#4a2800'); g.addColorStop(0.3,'#7a4a1a'); g.addColorStop(0.6,'#9a6030'); g.addColorStop(1,'#4a2800');
+  ctx.fillStyle=g; ctx.fill();
+  // Shoulder
+  ctx.beginPath();
+  ctx.moveTo(-neckW,-hh+capH+neckH); ctx.lineTo(neckW,-hh+capH+neckH);
+  ctx.lineTo(hw,bodyTop); ctx.lineTo(-hw,bodyTop); ctx.closePath();
+  ctx.fillStyle='#3d2010'; ctx.fill();
+  // Neck
+  ctx.fillStyle='#5a3820'; ctx.fillRect(-neckW,-hh+capH,neckW*2,neckH);
+  // Cap — black cap (craft style)
+  ctx.beginPath(); ctx.rect(-neckW*1.1,-hh,neckW*2.2,capH);
+  ctx.fillStyle='#1a1a1a'; ctx.fill(); ctx.strokeStyle='#333'; ctx.lineWidth=0.8; ctx.stroke();
+  ctx.fillStyle='#444';
+  for(let nx=-neckW*0.9;nx<neckW*0.9;nx+=4) ctx.fillRect(nx,-hh,2,2.5);
+  // Label — orange/kraft paper craft style
+  const labelTop=bodyTop+hh*0.08, labelH=hh*0.62;
+  ctx.fillStyle='#e87030';
+  ctx.beginPath(); roundRect(ctx,-hw*0.82,labelTop,hw*1.64,labelH,3); ctx.fill();
+  // Inner kraft area
+  ctx.fillStyle='#d4a060';
+  ctx.beginPath(); roundRect(ctx,-hw*0.65,labelTop+labelH*0.25,hw*1.3,labelH*0.55,2); ctx.fill();
+  // Hops icon (simplified)
+  ctx.fillStyle='rgba(50,120,30,0.7)';
+  ctx.beginPath(); ctx.ellipse(0,labelTop+labelH*0.52,5,3,0.3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-5,labelTop+labelH*0.48,4,2.5,-0.3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(5,labelTop+labelH*0.48,4,2.5,0.3,0,Math.PI*2); ctx.fill();
+  // Highlight
+  ctx.fillStyle='rgba(255,255,255,0.10)';
+  ctx.fillRect(-hw+2,bodyTop+4,hw*0.38,hh-bodyTop-8);
+  ctx.strokeStyle='rgba(255,255,255,0.12)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.rect(-hw,bodyTop,d.w,hh*2); ctx.stroke();
+}
+
+// ── CHUPITO ASSENZIO — neon green glowing absinthe ───────────────────────────
+function drawChupitoAssenzio(ctx, d) {
+  const hw=d.w/2, hh=d.h/2, baseH=hh*0.28;
+  // Glow effect
+  ctx.save();
+  ctx.shadowColor='#39ff14'; ctx.shadowBlur=12;
+  // Thick base
+  ctx.beginPath();
+  ctx.moveTo(-hw,hh); ctx.lineTo(hw,hh);
+  ctx.lineTo(hw*0.88,hh-baseH); ctx.lineTo(-hw*0.88,hh-baseH); ctx.closePath();
+  ctx.fillStyle='rgba(255,255,255,0.35)'; ctx.fill();
+  // Glass body
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.78,-hh); ctx.lineTo(hw*0.78,-hh);
+  ctx.lineTo(hw*0.88,hh-baseH); ctx.lineTo(-hw*0.88,hh-baseH); ctx.closePath();
+  const g=ctx.createLinearGradient(-hw,-hh,hw,0);
+  g.addColorStop(0,'#1aaa00'); g.addColorStop(0.5,'#39ff14'); g.addColorStop(1,'#1aaa00');
+  ctx.fillStyle=g; ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.fill();
+  ctx.strokeStyle='rgba(180,255,150,0.6)'; ctx.lineWidth=1.5; ctx.stroke();
+  // Surface
+  ctx.beginPath(); ctx.ellipse(0,-hh+3,hw*0.68,3,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(100,255,80,0.5)'; ctx.fill();
+  ctx.restore();
+  // Highlight
+  ctx.fillStyle='rgba(255,255,255,0.25)';
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.68,-hh+4); ctx.lineTo(-hw*0.42,-hh+4);
+  ctx.lineTo(-hw*0.52,hh-baseH-4); ctx.lineTo(-hw*0.78,hh-baseH-4);
+  ctx.closePath(); ctx.fill();
+}
+
+// ── CHUPITO BLU — blue curaçao shot ─────────────────────────────────────────
+function drawChupitoBlu(ctx, d) {
+  const hw=d.w/2, hh=d.h/2, baseH=hh*0.28;
+  ctx.beginPath();
+  ctx.moveTo(-hw,hh); ctx.lineTo(hw,hh);
+  ctx.lineTo(hw*0.88,hh-baseH); ctx.lineTo(-hw*0.88,hh-baseH); ctx.closePath();
+  ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.78,-hh); ctx.lineTo(hw*0.78,-hh);
+  ctx.lineTo(hw*0.88,hh-baseH); ctx.lineTo(-hw*0.88,hh-baseH); ctx.closePath();
+  const g=ctx.createLinearGradient(-hw,-hh,hw,0);
+  g.addColorStop(0,'#0a3ccc'); g.addColorStop(0.5,'#4169e1'); g.addColorStop(1,'#0a3ccc');
+  ctx.fillStyle=g; ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.10)'; ctx.fill();
+  ctx.strokeStyle='rgba(150,180,255,0.5)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(0,-hh+3,hw*0.68,3,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(80,120,255,0.45)'; ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.28)';
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.68,-hh+4); ctx.lineTo(-hw*0.42,-hh+4);
+  ctx.lineTo(-hw*0.52,hh-baseH-4); ctx.lineTo(-hw*0.78,hh-baseH-4);
+  ctx.closePath(); ctx.fill();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  NEW ICONIC DRINKS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── HIGHBALL — whisky & cola, tall cylindrical rocks glass ──────────────────
+function drawHighball(ctx, d) {
+  const hw=d.w/2, hh=d.h/2;
+  // Glass body — slight taper wider at top
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.9,-hh); ctx.lineTo(hw*0.9,-hh);
+  ctx.lineTo(hw,hh); ctx.lineTo(-hw,hh); ctx.closePath();
+  const g=ctx.createLinearGradient(-hw,-hh,hw,0);
+  g.addColorStop(0,'#3a1a08'); g.addColorStop(0.4,'#6b3010'); g.addColorStop(0.7,'#8a4518'); g.addColorStop(1,'#3a1a08');
+  ctx.fillStyle=g; ctx.fill();
+  // Glass shine
+  ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.30)'; ctx.lineWidth=1.2; ctx.stroke();
+  // Ice cubes
+  ctx.fillStyle='rgba(200,230,255,0.55)';
+  [[0,-hh*0.45,10,10],[hw*0.2,-hh*0.2,9,9],[-hw*0.2,-hh*0.3,8,9]].forEach(([x,y,w,h])=>{
+    ctx.beginPath(); roundRect(ctx,x-w/2,y-h/2,w,h,2); ctx.fill();
+    ctx.strokeStyle='rgba(180,210,255,0.4)'; ctx.lineWidth=0.6; ctx.stroke();
+  });
+  // Cola surface
+  ctx.beginPath(); ctx.ellipse(0,-hh+4,hw*0.82,4,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(80,40,10,0.7)'; ctx.fill();
+  // Bubbles
+  ctx.fillStyle='rgba(255,255,255,0.4)';
+  [[-5,-hh*0.6,1.5],[3,-hh*0.35,1],[hw*0.15,-hh*0.55,1.2]].forEach(([x,y,r])=>{
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  });
+  // Straw
+  ctx.strokeStyle='#ff3d9a'; ctx.lineWidth=2.5; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(hw*0.3,hh*0.8); ctx.lineTo(hw*0.15,-hh*0.95); ctx.stroke();
+  // Highlight stripe
+  ctx.fillStyle='rgba(255,255,255,0.14)';
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.72,-hh+3); ctx.lineTo(-hw*0.5,-hh+3);
+  ctx.lineTo(-hw*0.55,hh-5); ctx.lineTo(-hw*0.78,hh-5); ctx.closePath(); ctx.fill();
+}
+
+// ── GRAPPA — Italian digestivo, tulip-shaped mini bottle ────────────────────
+function drawGrappa(ctx, d) {
+  const hw=d.w/2, hh=d.h/2;
+  const capH=hh*0.09, neckH=hh*0.22, neckW=hw*0.35;
+  const waistY=-hh*0.1; // widest point below center
+  const bodyTop=-hh+capH+neckH;
+  // Tulip body (wider in middle-bottom)
+  ctx.beginPath();
+  ctx.moveTo(-neckW,bodyTop);
+  ctx.bezierCurveTo(-hw*1.1,waistY,-hw,hh*0.6,-hw*0.8,hh);
+  ctx.lineTo(hw*0.8,hh);
+  ctx.bezierCurveTo(hw,hh*0.6,hw*1.1,waistY,neckW,bodyTop);
+  ctx.closePath();
+  const g=ctx.createLinearGradient(-hw,0,hw,0);
+  g.addColorStop(0,'rgba(240,235,220,0.5)');
+  g.addColorStop(0.3,'rgba(255,250,240,0.8)');
+  g.addColorStop(0.7,'rgba(240,235,220,0.7)');
+  g.addColorStop(1,'rgba(240,235,220,0.4)');
+  ctx.fillStyle=g; ctx.fill();
+  ctx.strokeStyle='rgba(200,190,170,0.6)'; ctx.lineWidth=1.2; ctx.stroke();
+  // Liquid inside (clear grappa, very light gold)
+  ctx.save(); ctx.clip();
+  const lg=ctx.createLinearGradient(-hw,0,hw,0);
+  lg.addColorStop(0,'rgba(230,210,150,0.25)');
+  lg.addColorStop(0.5,'rgba(250,235,180,0.35)');
+  lg.addColorStop(1,'rgba(230,210,150,0.25)');
+  ctx.fillStyle=lg;
+  ctx.fillRect(-hw,bodyTop+6,d.w,hh*2);
+  ctx.restore();
+  // Neck
+  ctx.fillStyle='rgba(240,235,220,0.6)';
+  ctx.fillRect(-neckW,-hh+capH,neckW*2,neckH+2);
+  ctx.strokeStyle='rgba(200,190,170,0.5)'; ctx.lineWidth=0.8; ctx.stroke();
+  // Cap — gold wax seal
+  ctx.beginPath();
+  ctx.ellipse(0,-hh+capH/2,neckW*0.9,capH*0.7,0,0,Math.PI*2);
+  ctx.fillStyle='#c8a020'; ctx.fill();
+  ctx.strokeStyle='#a07010'; ctx.lineWidth=0.8; ctx.stroke();
+  // Label band
+  ctx.fillStyle='rgba(180,160,110,0.4)';
+  ctx.fillRect(-neckW+2,bodyTop+hh*0.12,neckW*2-4,hh*0.38);
+}
+
+// ── PROSECCO — tall champagne flute, bubbles, golden ────────────────────────
+function drawProsecco(ctx, d) {
+  const hw=d.w/2, hh=d.h/2;
+  const bowlW=hw*0.95, stemH=hh*0.32, stemW=2;
+  const bowlTop=-hh, bowlBot=hh*0.3;
+  // Flute bowl — narrow trapezoid
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.3, bowlBot);
+  ctx.lineTo(hw*0.3, bowlBot);
+  ctx.lineTo(bowlW, bowlTop);
+  ctx.lineTo(-bowlW, bowlTop);
+  ctx.closePath();
+  const g=ctx.createLinearGradient(-bowlW,bowlTop,bowlW,0);
+  g.addColorStop(0,'#c8a800'); g.addColorStop(0.4,'#f5e642'); g.addColorStop(0.7,'#e8d530'); g.addColorStop(1,'#b89000');
+  ctx.fillStyle=g; ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.07)'; ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=1; ctx.stroke();
+  // Foam top
+  ctx.save(); ctx.clip();
+  ctx.beginPath();
+  for(let bx=-bowlW+3;bx<bowlW-3;bx+=5) ctx.arc(bx,bowlTop+4,3.5,Math.PI,0);
+  ctx.fillStyle='rgba(255,255,240,0.85)'; ctx.fill();
+  ctx.restore();
+  // Stem
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.fillRect(-stemW/2,bowlBot,stemW,stemH);
+  // Base
+  ctx.beginPath(); ctx.ellipse(0,bowlBot+stemH,hw*0.75,4,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.fill();
+  // Bubbles rising
+  ctx.fillStyle='rgba(255,255,200,0.65)';
+  const now=Date.now()/800;
+  [[0,0.7],[0.2,0.4],[-0.15,0.55],[0.1,0.25]].forEach(([xr,yr],i)=>{
+    const by=bowlBot+(bowlTop-bowlBot)*(((yr+now*0.15+i*0.25)%1));
+    ctx.beginPath(); ctx.arc(xr*hw*0.4,by,1.2,0,Math.PI*2); ctx.fill();
+  });
+  // Glass highlight
+  ctx.fillStyle='rgba(255,255,255,0.22)';
+  ctx.beginPath();
+  ctx.moveTo(-bowlW+2,bowlTop+4); ctx.lineTo(-bowlW*0.55,bowlTop+4);
+  ctx.lineTo(-hw*0.15,bowlBot-4); ctx.lineTo(-hw*0.28,bowlBot-4);
+  ctx.closePath(); ctx.fill();
+}
+
+// ── SPRITZ — aperol spritz in rocks glass, orange, ice & slice ──────────────
+function drawSpritz(ctx, d) {
+  const hw=d.w/2, hh=d.h/2;
+  // Short rocks glass — slightly tapered
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.88,-hh); ctx.lineTo(hw*0.88,-hh);
+  ctx.lineTo(hw,hh); ctx.lineTo(-hw,hh); ctx.closePath();
+  const g=ctx.createLinearGradient(-hw,-hh,hw,0);
+  g.addColorStop(0,'#c84000'); g.addColorStop(0.4,'#ff7f28'); g.addColorStop(0.7,'#ffa050'); g.addColorStop(1,'#c84000');
+  ctx.fillStyle=g; ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.32)'; ctx.lineWidth=1.3; ctx.stroke();
+  // Ice cubes
+  ctx.fillStyle='rgba(200,235,255,0.5)';
+  [[-hw*0.3,-hh*0.3,12,11],[hw*0.2,-hh*0.45,10,10]].forEach(([x,y,w,h])=>{
+    ctx.beginPath(); roundRect(ctx,x,y,w,h,2); ctx.fill();
+    ctx.strokeStyle='rgba(180,215,255,0.35)'; ctx.lineWidth=0.5; ctx.stroke();
+  });
+  // Orange slice on rim
+  ctx.save(); ctx.translate(hw*0.55,-hh+1);
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,9,Math.PI*1.05,Math.PI*1.95); ctx.closePath();
+  ctx.fillStyle='#ff9000'; ctx.fill();
+  ctx.strokeStyle='#c85000'; ctx.lineWidth=0.8; ctx.stroke();
+  // Slice segments
+  ctx.strokeStyle='rgba(255,200,80,0.6)'; ctx.lineWidth=0.5;
+  for(let a=Math.PI*1.1;a<Math.PI*1.9;a+=Math.PI/5){
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*9,Math.sin(a)*9); ctx.stroke();
+  }
+  ctx.restore();
+  // Prosecco bubbles
+  ctx.fillStyle='rgba(255,220,100,0.5)';
+  [[-3,-hh*0.6,1.2],[hw*0.1,-hh*0.35,1],[-hw*0.15,-hh*0.5,0.9]].forEach(([x,y,r])=>{
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  });
+  // Surface
+  ctx.beginPath(); ctx.ellipse(0,-hh+3,hw*0.82,3.5,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(255,140,40,0.5)'; ctx.fill();
+  // Highlight
+  ctx.fillStyle='rgba(255,255,255,0.16)';
+  ctx.beginPath();
+  ctx.moveTo(-hw*0.78,-hh+3); ctx.lineTo(-hw*0.52,-hh+3);
+  ctx.lineTo(-hw*0.58,hh-5); ctx.lineTo(-hw*0.84,hh-5); ctx.closePath(); ctx.fill();
+}
+
+// ── AMARO — Italian bitter digestivo, dark squat bottle ─────────────────────
+function drawAmaro(ctx, d) {
+  const hw=d.w/2, hh=d.h/2;
+  const capH=hh*0.07, neckH=hh*0.18, neckW=hw*0.48, shoulderH=hh*0.10;
+  const bodyTop=-hh+capH+neckH+shoulderH;
+  // Body — very dark, almost black bottle
+  ctx.beginPath(); ctx.rect(-hw,bodyTop,d.w,hh-bodyTop);
+  const g=ctx.createLinearGradient(-hw,0,hw,0);
+  g.addColorStop(0,'#0a0a0a'); g.addColorStop(0.3,'#1e1410'); g.addColorStop(0.6,'#2a1a0a'); g.addColorStop(1,'#0a0a0a');
+  ctx.fillStyle=g; ctx.fill();
+  // Shoulder
+  ctx.beginPath();
+  ctx.moveTo(-neckW,-hh+capH+neckH); ctx.lineTo(neckW,-hh+capH+neckH);
+  ctx.lineTo(hw,bodyTop); ctx.lineTo(-hw,bodyTop); ctx.closePath();
+  ctx.fillStyle='#120c06'; ctx.fill();
+  // Neck
+  ctx.fillStyle='#181008'; ctx.fillRect(-neckW,-hh+capH,neckW*2,neckH);
+  // Cap — gold
+  ctx.beginPath(); ctx.rect(-neckW*1.0,-hh,neckW*2.0,capH);
+  ctx.fillStyle='#c8a020'; ctx.fill(); ctx.strokeStyle='#a07010'; ctx.lineWidth=0.8; ctx.stroke();
+  // Label — ornate dark gold style
+  const labelTop=bodyTop+hh*0.08, labelH=hh*0.64;
+  ctx.fillStyle='#c8a020';
+  ctx.beginPath(); roundRect(ctx,-hw*0.82,labelTop,hw*1.64,labelH,3); ctx.fill();
+  ctx.fillStyle='#1a0e04';
+  ctx.beginPath(); roundRect(ctx,-hw*0.72,labelTop+labelH*0.12,hw*1.44,labelH*0.76,2); ctx.fill();
+  // Inner gold border
+  ctx.strokeStyle='#c8a020'; ctx.lineWidth=0.8;
+  ctx.beginPath(); roundRect(ctx,-hw*0.66,labelTop+labelH*0.18,hw*1.32,labelH*0.62,1); ctx.stroke();
+  // Text lines sim
+  ctx.fillStyle='rgba(200,160,32,0.7)';
+  ctx.fillRect(-hw*0.5,labelTop+labelH*0.32,hw,2);
+  ctx.fillRect(-hw*0.35,labelTop+labelH*0.52,hw*0.7,1.5);
+  ctx.fillRect(-hw*0.4,labelTop+labelH*0.65,hw*0.8,1.5);
+  // Highlight
+  ctx.fillStyle='rgba(255,255,255,0.06)';
+  ctx.fillRect(-hw+2,bodyTop+4,hw*0.32,hh-bodyTop-8);
+  ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.rect(-hw,bodyTop,d.w,hh*2); ctx.stroke();
+}
+
+// ── NEXT ITEM PREVIEW ────────────────────────────────────────────────────────
+function drawNextPreview(ctx) {
+  if (!nextItemDef) return;
+  const d = nextItemDef;
+  const px = W - 56, py = 90;
+
+  ctx.save();
+  // Panel background
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, W - 88, 52, 76, 80, 6);
+  ctx.fill(); ctx.stroke();
+
+  // Label
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.font = "10px 'VT323', monospace";
+  ctx.textAlign = 'center';
+  ctx.fillText('NEXT', px, 68);
+
+  // Draw item ghost at small scale
+  ctx.translate(px, py + 4);
+  const scale = Math.min(1, 44 / Math.max(d.w, d.h));
+  ctx.scale(scale, scale);
+  ctx.globalAlpha = 0.65;
+  drawItem(ctx, d);
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+// ── ARM ──────────────────────────────────────────────────────────────────────
+function drawArm(ctx, handX, handY, baseX, baseY) {
+  ctx.save();
+
+  // ── Forearm / sleeve ────────────────────────────────────────────────────
+  // Uses a bezier-based tapered shape for volume instead of flat trapezoid
+  const sleeveW = 44;   // width at wrist
+  const baseW   = 72;   // width at elbow (off-screen bottom)
+
+  // Left edge of sleeve (slightly curved for roundness)
+  const lWristX = handX - sleeveW / 2, lWristY = handY + 2;
+  const rWristX = handX + sleeveW / 2, rWristY = handY + 2;
+  const lBaseX  = baseX - baseW / 2,   lBaseY  = baseY;
+  const rBaseX  = baseX + baseW / 2,   rBaseY  = baseY;
+
+  // Sleeve shape with slight outward bow (rubber-hose volume)
+  ctx.beginPath();
+  ctx.moveTo(lWristX, lWristY);
+  ctx.bezierCurveTo(lWristX - 10, handY + (baseY - handY) * 0.4,
+                    lBaseX  - 6,  lBaseY  - (baseY - handY) * 0.3,
+                    lBaseX, lBaseY);
+  ctx.lineTo(rBaseX, rBaseY);
+  ctx.bezierCurveTo(rBaseX  + 6,  rBaseY  - (baseY - handY) * 0.3,
+                    rWristX + 10, handY + (baseY - handY) * 0.4,
+                    rWristX, rWristY);
+  ctx.closePath();
+
+  // Sleeve gradient — dark navy with lighter inner highlight
+  const sleeveGrad = ctx.createLinearGradient(handX - sleeveW, 0, handX + sleeveW, 0);
+  sleeveGrad.addColorStop(0,   '#1a3060');
+  sleeveGrad.addColorStop(0.3, '#2c5299');
+  sleeveGrad.addColorStop(0.6, '#3a6abf');
+  sleeveGrad.addColorStop(1,   '#1a3060');
+  ctx.fillStyle = sleeveGrad;
+  ctx.fill();
+
+  // Sleeve centre highlight line (rubber-hose sheen)
+  ctx.beginPath();
+  ctx.moveTo(handX - 4, lWristY);
+  ctx.bezierCurveTo(handX - 6, handY + (baseY - handY) * 0.35,
+                    handX - 4, lBaseY - (baseY - handY) * 0.25,
+                    handX - 3, lBaseY);
+  ctx.strokeStyle = 'rgba(120,160,255,0.22)';
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // ── Polsino (cuff) ───────────────────────────────────────────────────────
+  const cuffW = sleeveW + 10, cuffH = 13;
+  const cy = handY + 2;
+
+  // Cuff base shape — slightly rounded rect
+  ctx.beginPath();
+  roundRect(ctx, handX - cuffW/2, cy - cuffH/2, cuffW, cuffH, 5);
+  const cuffGrad = ctx.createLinearGradient(handX - cuffW/2, 0, handX + cuffW/2, 0);
+  cuffGrad.addColorStop(0,   '#d4b896');
+  cuffGrad.addColorStop(0.4, '#f0d9bc');
+  cuffGrad.addColorStop(0.7, '#e8cba8');
+  cuffGrad.addColorStop(1,   '#c9a47a');
+  ctx.fillStyle = cuffGrad;
+  ctx.fill();
+
+  // Cuff stitching lines (two thin stripes)
+  ctx.strokeStyle = 'rgba(160,110,60,0.35)';
+  ctx.lineWidth = 0.8;
+  for (const dy of [-2, 2]) {
+    ctx.beginPath();
+    ctx.moveTo(handX - cuffW/2 + 4, cy + dy);
+    ctx.lineTo(handX + cuffW/2 - 4, cy + dy);
+    ctx.stroke();
+  }
+
+  // Cuff button (small circle on right side)
+  ctx.beginPath();
+  ctx.arc(handX + cuffW/2 - 10, cy, 3, 0, Math.PI * 2);
+  ctx.fillStyle = '#a07848';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(handX + cuffW/2 - 10, cy, 3, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  ctx.restore(); // end cuff/sleeve ctx.save()
+
+  // ── Hand — cartoon Fleischer 3-finger style ───────────────────────────────
+  ctx.save();
+  ctx.translate(handX, handY - 16);
+
+  const OUTLINE_C = '#1a0800';
+  const FILL_C    = '#e8b07a';
+  const FILL_LIT  = '#f5cc95';
+  const FILL_SHD  = '#c8784a';
+
+  const paintFinger = (x1, y1, x2, y2, r) => {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    const nx = -dy/len, ny = dx/len;
+    ctx.beginPath();
+    ctx.arc(x2, y2, r, Math.atan2(dy, dx) - Math.PI/2, Math.atan2(dy, dx) + Math.PI/2);
+    ctx.arc(x1, y1, r, Math.atan2(dy, dx) + Math.PI/2, Math.atan2(dy, dx) - Math.PI/2);
+    ctx.closePath();
+    ctx.fillStyle = FILL_C;
+    ctx.fill();
+    // Knuckle dent
+    ctx.beginPath();
+    ctx.arc(x1 + nx*r*0.3, y1 + ny*r*0.3, r*0.45, Math.PI*0.1, Math.PI*0.9);
+    ctx.strokeStyle = FILL_SHD; ctx.lineWidth = 1.2; ctx.stroke();
+  };
+
+  // 3 fingers: index, middle (tallest), ring
+  paintFinger(-12, 0,  -14, -24, 5);
+  paintFinger(  1, -2,    0, -28, 5.5);
+  paintFinger( 14,  0,   15, -23, 5);
+
+  // Thumb — short, sticks out left
+  paintFinger(-19, 10, -30,  -2, 5);
+
+  // Palm background
+  ctx.beginPath();
+  ctx.ellipse(1, 6, 21, 15, 0, 0, Math.PI * 2);
+  ctx.fillStyle = FILL_C;
+  ctx.fill();
+
+  // Re-draw fingers on top of palm (order fix)
+  paintFinger(-12, 0,  -14, -24, 5);
+  paintFinger(  1, -2,    0, -28, 5.5);
+  paintFinger( 14,  0,   15, -23, 5);
+  paintFinger(-19, 10, -30,  -2, 5);
+
+  // Palm highlight
+  ctx.beginPath();
+  ctx.ellipse(-4, 3, 9, 6, -0.2, 0, Math.PI * 2);
+  ctx.fillStyle = FILL_LIT; ctx.globalAlpha = 0.32; ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+// ── RAIN DRAWING ──────────────────────────────────────────────────────────────
+function drawRain(ctx) {
+  // Spawn new drops
+  if (Math.random() < 0.6) {
+    rainDrops.push({
+      x: Math.random() * W,
+      y: -10,
+      speed: 8 + Math.random() * 6,
+      len: 12 + Math.random() * 8,
+      alpha: 0.2 + Math.random() * 0.25
+    });
+  }
+  ctx.save();
+  ctx.strokeStyle = 'rgba(160,210,255,0.35)';
+  ctx.lineWidth = 1;
+  for (let i = rainDrops.length - 1; i >= 0; i--) {
+    const d = rainDrops[i];
+    d.y += d.speed;
+    ctx.globalAlpha = d.alpha;
+    ctx.beginPath();
+    ctx.moveTo(d.x, d.y);
+    ctx.lineTo(d.x - 2, d.y + d.len);
+    ctx.stroke();
+    if (d.y > H + 20) rainDrops.splice(i, 1);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Wet overlay at bottom
+  ctx.save();
+  const wetGrad = ctx.createLinearGradient(0, H - 60, 0, H);
+  wetGrad.addColorStop(0, 'rgba(100,150,220,0)');
+  wetGrad.addColorStop(1, 'rgba(100,150,220,0.08)');
+  ctx.fillStyle = wetGrad;
+  ctx.fillRect(0, H - 60, W, 60);
+  ctx.restore();
+}
+
+// ── WIND INDICATOR ────────────────────────────────────────────────────────────
+function drawWindIndicator(ctx) {
+  const side = windDirection > 0 ? 'left' : 'right'; // wind comes from left → arrows point right
+  const x = side === 'left' ? 14 : W - 14;
+  const baseY = H / 2 - 40;
+  const now = Date.now() / 600;
+
+  ctx.save();
+  ctx.globalAlpha = 0.5 + 0.2 * Math.sin(now);
+  ctx.strokeStyle = 'rgba(180,220,255,0.8)';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+
+  for (let i = 0; i < 4; i++) {
+    const y = baseY + i * 22;
+    const offset = Math.sin(now + i * 1.2) * 4;
+    const dir = windDirection;
+    const startX = x;
+    const len = 18;
+    ctx.beginPath();
+    ctx.moveTo(startX, y + offset);
+    ctx.bezierCurveTo(
+      startX + dir * 6,  y + offset - 3,
+      startX + dir * 12, y + offset + 3,
+      startX + dir * len, y + offset
+    );
+    ctx.stroke();
+    // Arrowhead
+    ctx.beginPath();
+    ctx.moveTo(startX + dir * len, y + offset);
+    ctx.lineTo(startX + dir * (len - 5), y + offset - 3);
+    ctx.moveTo(startX + dir * len, y + offset);
+    ctx.lineTo(startX + dir * (len - 5), y + offset + 3);
+    ctx.stroke();
+  }
+
+  // Label
+  ctx.fillStyle = 'rgba(180,220,255,0.7)';
+  ctx.font = "11px 'VT323', monospace";
+  ctx.textAlign = side === 'left' ? 'left' : 'right';
+  ctx.fillText('WIND', x, baseY - 12);
+  ctx.restore();
+}
+
+// ── ANCHOR TATTOO ─────────────────────────────────────────────────────────────
+function drawAnchorTattoo(ctx) {
+  ctx.strokeStyle = 'rgba(30,10,60,0.88)';
+  ctx.fillStyle   = 'rgba(30,10,60,0.65)';
+  ctx.lineWidth   = 1.8;
+  ctx.lineCap     = 'round';
+  ctx.lineJoin    = 'round';
+  const s = 0.52;
+  ctx.scale(s, s);
+
+  // Shaft
+  ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(0, 20); ctx.stroke();
+
+  // Ring at top
+  ctx.beginPath(); ctx.arc(0, -20, 5.5, 0, Math.PI * 2); ctx.stroke();
+
+  // Crossbar
+  ctx.beginPath(); ctx.moveTo(-14, -7); ctx.lineTo(14, -7); ctx.stroke();
+  // Crossbar end balls
+  [-14, 14].forEach(x => {
+    ctx.beginPath(); ctx.arc(x, -7, 2.5, 0, Math.PI*2);
+    ctx.fill();
+  });
+
+  // Left fluke
+  ctx.beginPath();
+  ctx.moveTo(0, 20);
+  ctx.bezierCurveTo(-3, 16, -18, 15, -18, 8);
+  ctx.bezierCurveTo(-18, 3, -10, 5, -8, 12);
+  ctx.stroke();
+
+  // Right fluke
+  ctx.beginPath();
+  ctx.moveTo(0, 20);
+  ctx.bezierCurveTo(3, 16, 18, 15, 18, 8);
+  ctx.bezierCurveTo(18, 3, 10, 5, 8, 12);
+  ctx.stroke();
+
+  // Rope spiral (3 loops)
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(30,10,60,0.45)';
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.arc(0, -4 + i * 8, 4, -Math.PI * 0.65, Math.PI * 0.65);
+    ctx.stroke();
+  }
+}
+
+function drawTray(ctx) {
+  if (!tray) return;
+  const p = tray.position, a = tray.angle;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(a);
+
+  // Tray shadow
+  ctx.fillStyle = 'rgba(0,0,0,.3)';
+  ctx.beginPath();
+  ctx.ellipse(4, TRAY_H/2 + 6, TRAY_W/2 + 6, 8, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Tray body — rounded rectangle
+  const tw = TRAY_W, th = TRAY_H;
+  ctx.fillStyle = '#e8e0d0';
+  roundRect(ctx, -tw/2, -th/2, tw, th, 5);
+  ctx.fill();
+
+  // Tray edge highlight
+  ctx.fillStyle = '#f5f0e8';
+  roundRect(ctx, -tw/2 + 2, -th/2 + 2, tw - 4, th/2 - 2, [3,3,0,0]);
+  ctx.fill();
+
+  // Tray dark edge
+  ctx.fillStyle = '#a89880';
+  roundRect(ctx, -tw/2, th/2 - 4, tw, 4, [0,0,5,5]);
+  ctx.fill();
+
+  // Cork mat texture
+  ctx.fillStyle = 'rgba(120,80,40,.15)';
+  for (let x = -tw/2 + 8; x < tw/2 - 8; x += 12) {
+    ctx.beginPath();
+    ctx.arc(x, 0, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  if (typeof r === 'number') r = [r, r, r, r];
+  ctx.beginPath();
+  ctx.moveTo(x + r[0], y);
+  ctx.lineTo(x + w - r[1], y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r[1]);
+  ctx.lineTo(x+w, y+h-r[2]);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r[2], y+h);
+  ctx.lineTo(x+r[3], y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r[3]);
+  ctx.lineTo(x, y+r[0]);
+  ctx.quadraticCurveTo(x, y, x+r[0], y);
+  ctx.closePath();
+}
+
+// ─────────────────────────────────────────────
+//  SPAWNING
+// ─────────────────────────────────────────────
+function pickRandomDef() {
+  const cfg = LEVEL_CONFIGS[currentLevelIdx];
+  const special = cfg ? cfg.special : null;
+
+  // L6: bomb guaranteed at a random spawn slot
+  if (special === 'bomb_guaranteed' && bombGuaranteed && !bombGuaranteedSpawned) {
+    if (typeof window._bombSlot !== 'undefined' && spawnedCount === window._bombSlot) {
+      bombGuaranteedSpawned = true;
+      return assignSkin(HAZARD_DEFS.find(d => d.id === 'bomba'));
+    }
+  }
+
+  // L8: double bomb — two guaranteed bomb slots
+  if (special === 'double_bomb' && doubleBombSpawned < 2) {
+    if (doubleBombSlots.includes(spawnedCount)) {
+      doubleBombSpawned++;
+      return assignSkin(HAZARD_DEFS.find(d => d.id === 'bomba'));
+    }
+  }
+
+  // L8 pigeon legacy (unused now — kept for safety)
+  if (special === 'pigeon' && pigeonGuaranteed && !pigeonGuaranteedSpawned) {
+    if (typeof window._pigeonSlot !== 'undefined' && spawnedCount === window._pigeonSlot) {
+      pigeonGuaranteedSpawned = true;
+      return assignSkin(HAZARD_DEFS.find(d => d.id === 'piccione'));
+    }
+  }
+
+  // L9: rain - 1 in 5 chance one item is bomb
+  if (special === 'rain' && rainBombChance && !rainBombSpawned) {
+    if (typeof window._rainBombSlot !== 'undefined' && spawnedCount === window._rainBombSlot) {
+      rainBombSpawned = true;
+      return assignSkin(HAZARD_DEFS.find(d => d.id === 'bomba'));
+    }
+  }
+
+  // L10: extreme - no bombs, no duplicates, always a boccale, 1/6 piccione
+  if (special === 'extreme') {
+    return pickExtremeItem();
+  }
+
+  // Build available pool based on current level
+  const availableItems = ITEM_DEFS.filter(d => currentLevelIdx >= d.minLevel);
+
+  // L1-L3: only original 6 (minLevel:0)
+  // L4+: new drinks start appearing (handled by minLevel gating above)
+  return assignSkin(availableItems[Math.floor(Math.random() * availableItems.length)]);
+}
+
+// Assign a random skin to a def — returns a shallow copy with _skin set
+function assignSkin(def) {
+  if (!def.skins || def.skins.length <= 1) return def;
+  const skin = def.skins[Math.floor(Math.random() * def.skins.length)];
+  return Object.assign({}, def, { _skin: skin });
+}
+
+function pickExtremeItem() {
+  const total = LEVEL_CONFIGS[9].count; // 6
+  const alreadySpawned = spawnedCount;
+  const remaining = total - alreadySpawned - 1;
+
+  // Must place pigeon if its slot matches
+  if (extremePigeonSlot >= 0 && alreadySpawned === extremePigeonSlot) {
+    return assignSkin(HAZARD_DEFS.find(d => d.id === 'piccione'));
+  }
+
+  // All items available at L10
+  const allItems = ITEM_DEFS.filter(d => d.minLevel <= 9);
+
+  // Must place boccale at designated slot
+  if (!extremeBeerIncluded && window._extremeBeerSlot === alreadySpawned) {
+    extremeBeerIncluded = true;
+    extremeUsedIds.push('boccale');
+    return assignSkin(allItems.find(d => d.id === 'boccale'));
+  }
+
+  // Last slot and boccale still not placed → force it
+  if (!extremeBeerIncluded && remaining === 0) {
+    extremeBeerIncluded = true;
+    extremeUsedIds.push('boccale');
+    return assignSkin(allItems.find(d => d.id === 'boccale'));
+  }
+
+  // No bombs; no duplicate IDs
+  const pool = allItems.filter(d =>
+    !extremeUsedIds.includes(d.id) &&
+    d.id !== 'boccale'
+  );
+
+  if (pool.length === 0) {
+    return assignSkin(allItems[Math.floor(Math.random() * allItems.length)]);
+  }
+
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  extremeUsedIds.push(pick.id);
+  if (pick.id === 'boccale') extremeBeerIncluded = true;
+  return assignSkin(pick);
+}
+
+function startSpawning() {
+  // Spawn interval shrinks with level: 2800ms → 1800ms by level 10
+  const interval = Math.max(1800, 2800 - currentLevelIdx * 120);
+
+  spawnItem();
+  spawnedCount++;
+  updateHUD();
+
+  spawnTimer = setInterval(() => {
+    if (isGameOver) { clearInterval(spawnTimer); return; }
+    if (spawnedCount >= LEVELS[currentLevelIdx]) {
+      clearInterval(spawnTimer);
+      if (!isGameOver) beginWinCountdown();
+      return;
+    }
+    spawnItem();
+    spawnedCount++;
+    updateHUD();
+  }, interval);
+}
+
+function spawnItem() {
+  const def = nextItemDef || pickRandomDef();
+  nextItemDef = pickRandomDef();
+  updateNextPreview();
+
+  const sx = W / 2 + (Math.random() * 200 - 100);
+  lastSpawnX = sx;
+
+  // Rain level: items are also slippery (20% less friction than normal)
+  const rainMult = (LEVEL_CONFIGS[currentLevelIdx]?.special === 'rain') ? 0.5 : 1.0;
+
+  // Bomb uses a circle body for realistic bouncing
+  let body;
+  const r = def.id === 'bomba' ? def.w / 2 : null;
+  if (r) {
+    body = Bodies.circle(sx, -def.h, r, {
+      label: def.label,
+      friction:      (def.friction    ?? 0.85) * rainMult,
+      frictionStatic:0.1 * rainMult,
+      restitution:   def.restitution ?? 0.04,
+      density:       def.density,
+      render: { fillStyle: 'transparent' },
+      collisionFilter: { category: 0x0002, mask: 0x0001 | 0x0002 }
+    });
+  } else {
+    const ph = def.physH || def.h;   // use reduced physics height if defined
+    body = Bodies.rectangle(sx, -def.h, def.w, ph, {
+      label: def.label,
+      friction:       (def.friction    ?? 0.85) * rainMult,
+      frictionStatic: (def.friction    ?? 0.9)  * rainMult,
+      restitution:    def.restitution ?? 0.04,
+      density:        def.density,
+      render: { fillStyle: 'transparent' },
+      collisionFilter: { category: 0x0002, mask: 0x0001 | 0x0002 }
+    });
+  }
+  body._def     = def;
+  body._landed  = false;
+  body._bombLit = false;  // bomb fuse activated
+  items.push(body);
+  Composite.add(engine.world, body);
+
+  const ind = document.getElementById('spawn-indicator');
+  ind.style.left = Math.max(20, Math.min(W - 40, sx)) + 'px';
+  ind.classList.add('show');
+  setTimeout(() => ind.classList.remove('show'), 600);
+}
+
+// ─────────────────────────────────────────────
+//  WIN COUNTDOWN
+// ─────────────────────────────────────────────
+function beginWinCountdown() {
+  if (isGameOver) return;
+  isCountingDown = true;
+  let sec = WIN_HOLD_SECS;
+
+  const wrap = document.getElementById('countdown-wrap');
+  const numEl = document.getElementById('countdown-num');
+  const bar = document.getElementById('countdown-bar');
+
+  wrap.style.display = 'flex';
+  numEl.innerText = sec;
+  bar.style.transition = 'none';
+  bar.style.width = '100%';
+
+  setTimeout(() => {
+    bar.style.transition = `width ${WIN_HOLD_SECS - 0.1}s linear`;
+    bar.style.width = '0%';
+  }, 50);
+
+  countTimer = setInterval(() => {
+    if (isGameOver) { clearInterval(countTimer); wrap.style.display = 'none'; return; }
+    sec--;
+    numEl.innerText = sec;
+    if (sec <= 0) {
+      clearInterval(countTimer);
+      wrap.style.display = 'none';
+      levelComplete();
+    }
+  }, 1000);
+}
+
+// ─────────────────────────────────────────────
+//  LEVEL MESSAGES (defined at top of script)
+// ─────────────────────────────────────────────
+
+function saveUnlockedLevel(lvlIdx) {
+  const unlocked = getUnlockedLevels();
+  if (lvlIdx < LEVEL_CONFIGS.length && !unlocked.includes(lvlIdx)) {
+    unlocked.push(lvlIdx);
+    localStorage.setItem('barbalance_unlocked', JSON.stringify(unlocked));
+  }
+}
+function getUnlockedLevels() {
+  try { return JSON.parse(localStorage.getItem('barbalance_unlocked') || '[0]'); }
+  catch(e) { return [0]; }
+}
+function saveLevelBest(lvlIdx, sc) {
+  const bests = getLevelBests();
+  if (!bests[lvlIdx] || sc > bests[lvlIdx]) {
+    bests[lvlIdx] = sc;
+    localStorage.setItem('barbalance_level_bests', JSON.stringify(bests));
+  }
+}
+function getLevelBests() {
+  try { return JSON.parse(localStorage.getItem('barbalance_level_bests') || '{}'); }
+  catch(e) { return {}; }
+}
+
+function computePenaltyCl() {
+  let tippedCount = 0, spilledCl = 0;
+  landedItems.forEach(function(d) {
+    const body = items.find(function(b) { return b._def === d; });
+    if (!body) return;
+    const absA = Math.abs(body.angle) % (Math.PI * 2);
+    const norm = absA > Math.PI ? Math.PI * 2 - absA : absA;
+    if (norm >= Math.PI * 0.5) {
+      tippedCount++;
+      const sk = d._skin || d.id;
+      spilledCl += (ITEM_CL[sk] || ITEM_CL[d.id] || 0);
+    }
+  });
+  return { tippedCount, spilledCl, penalty: tippedCount * TIPPED_PENALTY_PTS };
+}
+
+function showPenaltyInEl(prefix, data) {
+  const penEl = document.getElementById(prefix + '-penalty');
+  const clEl  = document.getElementById(prefix + '-cl');
+  if (penEl && data.tippedCount > 0) {
+    penEl.style.display = 'block';
+    penEl.innerText = '⚠ ' + data.tippedCount + ' tipped → -' + data.penalty + ' pts';
+  } else if (penEl) penEl.style.display = 'none';
+  if (clEl && data.spilledCl > 0) {
+    clEl.style.display = 'block';
+    clEl.innerText = '💧 Liquid spilled: ' + data.spilledCl + ' cl';
+  } else if (clEl) clEl.style.display = 'none';
+}
+
+function levelComplete() {
+  // Compute and apply penalty
+  const pd = computePenaltyCl();
+  if (pd.penalty > 0) score = Math.max(0, score - pd.penalty);
+
+  saveLevelBest(currentLevelIdx, score);
+  if (score > bestScore) { bestScore = score; localStorage.setItem('barbalance_best', bestScore); }
+
+  if (currentLevelIdx >= LEVEL_CONFIGS.length - 1) {
+    // Won all 10! Show grand finale screen
+    isGameOver = true; // freeze
+    document.getElementById('win10-score').innerText = score;
+    document.getElementById('win10-best').innerText  = bestScore;
+    showPenaltyInEl('win10', pd);
+    const counts10 = {};
+    landedItems.forEach(function(d) { counts10[d.label] = (counts10[d.label] || 0) + 1; });
+    const summaryEl10 = document.getElementById('win10-items');
+    if (summaryEl10) summaryEl10.innerHTML = Object.entries(counts10).map(function(e) {
+      return '<span>' + e[1] + '× ' + e[0] + '</span>';
+    }).join('&nbsp; ');
+    document.getElementById('win10-screen').style.display = 'flex';
+    startConfettiAnimation();
+  } else {
+    // Unlock next level, show level-clear win screen briefly
+    saveUnlockedLevel(currentLevelIdx + 1);
+    document.getElementById('win-score').innerText = score;
+    document.getElementById('win-best').innerText  = bestScore;
+    showPenaltyInEl('win', pd);
+    const countsWin = {};
+    landedItems.forEach(function(d) { countsWin[d.label] = (countsWin[d.label] || 0) + 1; });
+    const summaryElWin = document.getElementById('win-items');
+    if (summaryElWin) summaryElWin.innerHTML = Object.entries(countsWin).map(function(e) {
+      return '<span>' + e[1] + '× ' + e[0] + '</span>';
+    }).join('&nbsp; ');
+    isGameOver = true; // freeze physics/lose checks while on win screen
+    document.getElementById('win-screen').style.display = 'flex';
+    // Auto-advance to next level after 10s
+    const advTimer = setTimeout(advanceFromWin, 10000);
+    window._winAdvTimer = advTimer;
+  }
+}
+
+function advanceFromWin() {
+  clearTimeout(window._winAdvTimer);
+  document.getElementById('win-screen').style.display = 'none';
+  isGameOver = false; // unfreeze before setupLevel
+  currentLevelIdx++;
+  setupLevel();
+}
+
+function showLevelQuip(line1, line2, onDone) {
+  const el = document.createElement('div');
+  el.style.cssText = `
+    position:absolute;inset:0;z-index:50;pointer-events:auto;
+    background:rgba(0,0,0,0.82);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+    font-family:'Bebas Neue',sans-serif;
+    cursor:pointer;
+  `;
+  el.innerHTML = `
+    <div style="font-size:clamp(28px,7vw,40px);color:#f0b429;letter-spacing:3px;
+                text-shadow:0 0 20px #f0b42966;text-align:center;padding:0 20px">${line1}</div>
+    <div style="font-size:clamp(22px,5.5vw,32px);color:#fff;letter-spacing:2px;
+                text-align:center;padding:0 20px">${line2}</div>
+    <div style="margin-top:24px;font-size:clamp(13px,3vw,17px);color:rgba(255,255,255,0.4);
+                letter-spacing:2px;animation:blink 1s step-end infinite">TAP TO CONTINUE</div>
+    <div style="margin-top:8px;font-size:clamp(16px,4vw,22px);color:#f0b429;letter-spacing:2px">
+      LEVEL ${currentLevelIdx + 1} →</div>
+  `;
+  document.getElementById('game-wrap').appendChild(el);
+  el.addEventListener('click', () => { el.remove(); onDone(); });
+  // Auto-advance after 10s if no tap
+  setTimeout(() => { if (el.parentNode) { el.remove(); onDone(); } }, 10000);
+}
+
+// ─────────────────────────────────────────────
+//  LOSE CONDITION
+// ─────────────────────────────────────────────
+function checkLoseCondition() {
+  for (const item of items) {
+    const outSide = item.position.x < -100 || item.position.x > W + 100;
+    const outBottom = item.position.y > H + 150;
+
+    // If a lit bomb exits the play area → defuse it (safe!)
+    if (item._def && item._def.isBomb && item._bombLit && (outSide || outBottom)) {
+      item._bombLit = false;
+      // Cancel its timer
+      bombTimers = bombTimers.filter(bt => {
+        if (bt.body === item) { clearInterval(bt.interval); return false; }
+        return true;
+      });
+    }
+
+    if (outSide || outBottom) {
+      if (!item._def.isBomb) { triggerGameOver(); return; } // normal item falls = lose
+      // bomb fell off = safe, remove from items to stop tracking
+    }
+  }
+  if (tray) {
+    const absAngle = Math.abs(tray.angle) % (Math.PI * 2);
+    const norm = absAngle > Math.PI ? Math.PI * 2 - absAngle : absAngle;
+    const pct  = Math.min(1, norm / MAX_TRAY_ANGLE);
+
+    // Tilt bar HUD
+    const tiltEl = document.getElementById('tilt-disp');
+    if (tiltEl) {
+      const bar = '█'.repeat(Math.round(pct * 8)) + '░'.repeat(8 - Math.round(pct * 8));
+      tiltEl.innerText = bar;
+      tiltEl.style.color = pct > 0.7 ? '#e53e3e' : pct > 0.4 ? '#f0b429' : '#6ec87a';
+    }
+
+    // Danger vignette — lerps in when angle > 50% of limit
+    const dangerPct = Math.max(0, (pct - 0.5) / 0.5);
+    vignetteAlpha += (dangerPct * 0.35 - vignetteAlpha) * 0.08;
+
+    if (norm > MAX_TRAY_ANGLE) { triggerGameOver(); return; }
+
+    const warn = document.getElementById('tilt-warn');
+    if (norm > MAX_TRAY_ANGLE * 0.72) {
+      warn.classList.add('show');
+      warn.style.left = (tray.angle > 0 ? '60%' : '20%');
+    } else {
+      warn.classList.remove('show');
+    }
+  }
+}
+
+function triggerGameOver(skipShake) {
+  if (isGameOver && !skipShake) return; // skipShake=true means isGameOver was already set by explodeBomb
+  isGameOver = true;
+  isCountingDown = false;
+  clearInterval(spawnTimer);
+  clearInterval(countTimer);
+  vignetteAlpha = 0;
+  document.getElementById('tilt-warn').classList.remove('show');
+  document.getElementById('countdown-wrap').style.display = 'none';
+
+  // Penalty: items tipped >=90deg
+  let tippedCount = 0, spilledCl = 0;
+  landedItems.forEach(function(d) {
+    const body = items.find(function(b) { return b._def === d; });
+    if (!body) return;
+    const absA = Math.abs(body.angle) % (Math.PI * 2);
+    const norm = absA > Math.PI ? Math.PI * 2 - absA : absA;
+    if (norm >= Math.PI * 0.5) {
+      tippedCount++;
+      const sk = d._skin || d.id;
+      spilledCl += (ITEM_CL[sk] || ITEM_CL[d.id] || 0);
+    }
+  });
+  const penalty = tippedCount * TIPPED_PENALTY_PTS;
+  if (penalty > 0) score = Math.max(0, score - penalty);
+
+  if (score > bestScore) { bestScore = score; localStorage.setItem('barbalance_best', bestScore); }
+
+  document.getElementById('go-level').innerText = currentLevelIdx + 1;
+  document.getElementById('go-score').innerText = score;
+  document.getElementById('go-best').innerText  = bestScore;
+  const quipEl = document.getElementById('go-quip');
+  if (quipEl) quipEl.innerText = '"' + GAME_OVER_MSGS[Math.floor(Math.random() * GAME_OVER_MSGS.length)] + '"';
+
+  const penEl = document.getElementById('go-penalty');
+  if (penEl && tippedCount > 0) {
+    penEl.style.display = 'block';
+    penEl.innerText = '⚠ ' + tippedCount + ' tipped → -' + penalty + ' pts';
+  } else if (penEl) penEl.style.display = 'none';
+
+  const clEl = document.getElementById('go-cl');
+  if (clEl && spilledCl > 0) {
+    clEl.style.display = 'block';
+    clEl.innerText = '💧 Liquid spilled: ' + spilledCl + ' cl';
+  } else if (clEl) clEl.style.display = 'none';
+
+  const counts = {};
+  landedItems.forEach(function(d) { counts[d.label] = (counts[d.label] || 0) + 1; });
+  const summaryEl = document.getElementById('go-items');
+  if (summaryEl) summaryEl.innerHTML = Object.entries(counts).map(function(e) {
+    return '<span>' + e[1] + '× ' + e[0] + '</span>';
+  }).join('&nbsp; ');
+
+  document.getElementById('gameover-screen').style.display = 'flex';
+
+  // Screen shake (skip if bomb already did a bigger shake)
+  if (!skipShake) {
+    const wrap = document.getElementById('game-wrap');
+    wrap.style.animation = 'none';
+    const sSt = document.createElement('style');
+    sSt.innerText = '@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}';
+    document.head.appendChild(sSt);
+    wrap.style.animation = 'shake .5s ease';
+    setTimeout(function() { wrap.style.animation = ''; }, 500);
+  }
+
+  // Delay so the gameover screen is fully rendered before sizing canvas
+  startCrashAnimation();
+}
+
+// ─────────────────────────────────────────────
+//  HUD
+// ─────────────────────────────────────────────
+function updateHUD() {
+  document.getElementById('lvl-disp').innerText   = 'LV ' + (currentLevelIdx + 1);
+  document.getElementById('items-disp').innerText = spawnedCount + ' / ' + LEVELS[currentLevelIdx];
+  document.getElementById('score-disp').innerText = score;
+  const bestEl = document.getElementById('best-disp');
+  if (bestEl) bestEl.innerText = '★ ' + bestScore;
+}
+
+// ─────────────────────────────────────────────
+//  GAME FLOW
+// ─────────────────────────────────────────────
+function showTutorial() {
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('tutorial-screen').style.display = 'flex';
+}
+
+function startGame() {
+  document.getElementById('tutorial-screen').style.display = 'none';
+  document.getElementById('start-screen').style.display = 'none';
+  // Preload background PNG
+  if (!window._bgImg) {
+    window._bgImg = new Image();
+    window._bgImg.onerror = () => { window._bgImg = null; }; // silently disable if missing
+    window._bgImg.src = './ASSET/BarBahlance_mainScreen.png';
+  }
+  showLevelSelect();
+}
+
+function showLevelSelect() {
+  // Ensure unlocked includes level 0
+  const unlocked = getUnlockedLevels();
+  if (!unlocked.includes(0)) { unlocked.push(0); localStorage.setItem('barbalance_unlocked', JSON.stringify(unlocked)); }
+
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('tutorial-screen').style.display = 'none';
+  document.getElementById('levelselect-screen').style.display = 'flex';
+
+  const grid = document.getElementById('level-grid');
+  const bests = getLevelBests();
+  grid.innerHTML = '';
+
+  LEVEL_NAMES.forEach((name, i) => {
+    const isUnlocked = unlocked.includes(i);
+    const best = bests[i];
+    // Special level icons only (no spoiler text)
+    const icons = ['🍺','🍹','🍸','🥂','🍷','💣','🌬️','💣','🌧️','💀'];
+    const cell = document.createElement('div');
+    cell.style.cssText = `
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+      background:${isUnlocked ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.3)'};
+      border:1px solid ${isUnlocked ? 'rgba(240,180,41,0.3)' : 'rgba(255,255,255,0.06)'};
+      border-radius:6px;padding:6px 4px;cursor:${isUnlocked ? 'pointer' : 'default'};
+      font-family:'VT323',monospace;
+      position:relative;overflow:hidden;
+      min-height:58px;
+      ${!isUnlocked ? 'filter:blur(0px);' : ''}
+    `;
+    if (!isUnlocked) {
+      // Blurred/pixelated locked look
+      cell.innerHTML = `
+        <div style="position:absolute;inset:0;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);background:rgba(0,0,0,0.5);z-index:2;display:flex;align-items:center;justify-content:center;">
+          <span style="font-size:clamp(16px,4vw,20px)">🔒</span>
+        </div>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:clamp(15px,4vw,20px);color:#333">${i + 1}</div>
+        <div style="font-size:clamp(14px,3.5vw,18px);filter:blur(2px)">${icons[i]}</div>
+        <div style="font-size:clamp(10px,2.4vw,12px);color:#333;text-align:center;">LVL ${i+1}</div>
+      `;
+    } else {
+      cell.innerHTML = `
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:clamp(15px,4vw,20px);color:#f0b429">${i + 1}</div>
+        <div style="font-size:clamp(14px,3.5vw,18px)">${icons[i]}</div>
+        <div style="font-size:clamp(10px,2.4vw,12px);color:#e0e0e0;text-align:center;">LVL ${i+1}</div>
+        ${best ? `<div style="font-size:clamp(9px,2vw,11px);color:#f0b429;">★${best}</div>` : ''}
+      `;
+      cell.addEventListener('click', () => {
+        document.getElementById('levelselect-screen').style.display = 'none';
+        currentLevelIdx = i;
+        score = 0;
+        landedItems = [];
+        // Stop any existing engine
+        if (runner) Runner.stop(runner);
+        if (render) Render.stop(render);
+        const old = document.getElementById('game-wrap').querySelector('canvas');
+        if (old) old.remove();
+        initEngine();
+        setupLevel();
+      });
+    }
+    grid.appendChild(cell);
+  });
+}
+
+// ─────────────────────────────────────────────
+//  CRASH DEBRIS ANIMATION
+// ─────────────────────────────────────────────
+function startCrashAnimation() {
+  const canvas = document.getElementById('crash-canvas');
+  if (!canvas) return;
+
+  // Canvas is now at game-wrap level — always rendered, always has correct dimensions
+  const wrap = document.getElementById('game-wrap');
+  const W = wrap.offsetWidth  || 420;
+  const H = wrap.offsetHeight || 630;
+
+  // Set both the HTML attribute size (pixel buffer) AND CSS size
+  canvas.width  = W;
+  canvas.height = H;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  canvas.style.display = 'block';   // make it visible
+
+  const ctx = canvas.getContext('2d');
+  const cx = W / 2;
+  const cy = H * 0.40;  // burst from centre of screen
+
+  // ── 40 iridescent glass shards ──────────────────────────────────────────
+  const shards = [];
+  for (let i = 0; i < 40; i++) {
+    const angle = (Math.PI * 2 / 40) * i + (Math.random() - 0.5) * 0.5;
+    const speed = 3 + Math.random() * 6;
+    shards.push({
+      x:  cx + (Math.random() - 0.5) * W * 0.3,
+      y:  cy + (Math.random() - 0.5) * H * 0.2,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - Math.random() * 2,
+      sz: 16 + Math.random() * 32,          // size 16–48 px
+      rot:  Math.random() * Math.PI * 2,
+      rotV: (Math.random() - 0.5) * 0.28,
+      hue:  180 + Math.random() * 60,       // cyan/blue glass range
+      irid: Math.random() * Math.PI * 2,    // iridescent phase offset
+    });
+  }
+
+  // ── 50 yellow/orange sparks ──────────────────────────────────────────────
+  const sparks = [];
+  for (let i = 0; i < 50; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 9;
+    sparks.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 3,
+      life: 1,
+      decay: 0.013 + Math.random() * 0.020,
+      r: 2.5 + Math.random() * 3,
+      col: Math.random() < 0.55 ? '#ffe044' : '#ff6622',
+    });
+  }
+
+  let frame = 0;
+  const FRAMES = 180;
+
+  function tick() {
+    frame++;
+    if (frame > FRAMES) {
+      ctx.clearRect(0, 0, W, H);
+      canvas.style.display = 'none';  // hide when done
+      return;
+    }
+    ctx.clearRect(0, 0, W, H);
+    const prog = frame / FRAMES;
+
+    // ── Shards ────────────────────────────────────────────────────────────
+    shards.forEach(function(s) {
+      s.x  += s.vx;  s.vx *= 0.97;
+      s.y  += s.vy;  s.vy += 0.11;
+      s.rot += s.rotV;
+
+      // Alpha: full for first 40% of animation, then fade out
+      const alpha = prog < 0.4 ? 1.0 : Math.max(0, 1 - (prog - 0.4) / 0.6);
+      if (alpha < 0.02) return;
+
+      // Iridescent hue shifts over time
+      const t = frame * 0.07 + s.irid;
+      const hue = s.hue + Math.sin(t) * 40;   // oscillates cyan↔blue↔white
+
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(s.rot);
+
+      // Main shard body
+      ctx.beginPath();
+      ctx.moveTo(0,            -s.sz * 0.55);
+      ctx.lineTo( s.sz * 0.46,  s.sz * 0.40);
+      ctx.lineTo(-s.sz * 0.40,  s.sz * 0.32);
+      ctx.closePath();
+      ctx.fillStyle   = `hsla(${hue}, 90%, 78%, ${(alpha * 0.80).toFixed(2)})`;
+      ctx.strokeStyle = `rgba(255,255,255,${(alpha * 0.95).toFixed(2)})`;
+      ctx.lineWidth   = 1.5;
+      ctx.fill();
+      ctx.stroke();
+
+      // Bright inner highlight facet
+      ctx.beginPath();
+      ctx.moveTo( 0,            -s.sz * 0.48);
+      ctx.lineTo( s.sz * 0.18,   s.sz * 0.08);
+      ctx.lineTo(-s.sz * 0.13,   s.sz * 0.04);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(255,255,255,${(alpha * 0.70).toFixed(2)})`;
+      ctx.fill();
+
+      ctx.restore();
+    });
+
+    // ── Sparks ─────────────────────────────────────────────────────────────
+    sparks.forEach(function(sp) {
+      sp.x  += sp.vx; sp.vx *= 0.95;
+      sp.y  += sp.vy; sp.vy += 0.22;
+      sp.life -= sp.decay;
+      if (sp.life < 0.02) return;
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, sp.r * sp.life, 0, Math.PI * 2);
+      ctx.fillStyle   = sp.col;
+      ctx.globalAlpha = sp.life;
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    requestAnimationFrame(tick);
+  }
+
+  requestAnimationFrame(tick);  // start on next frame — game-wrap is always painted
+}
+
+// ─────────────────────────────────────────────
+//  CONFETTI ANIMATION (L10 WIN)
+// ─────────────────────────────────────────────
+function startConfettiAnimation() {
+  const canvas = document.getElementById('confetti-canvas');
+  if (!canvas) return;
+  const W2 = canvas.offsetWidth || 420;
+  const H2 = canvas.offsetHeight || 630;
+  canvas.width  = W2;
+  canvas.height = H2;
+  const ctx2 = canvas.getContext('2d');
+
+  const COLORS = ['#f0b429','#e53e3e','#38a169','#3182ce','#805ad5','#fff','#fd9800','#ff6b6b'];
+  const pieces = [];
+  for (let i = 0; i < 90; i++) {
+    pieces.push({
+      x: Math.random() * W2,
+      y: -20 - Math.random() * H2 * 0.5,
+      w: 6 + Math.random() * 8,
+      h: 3 + Math.random() * 5,
+      rot: Math.random() * Math.PI * 2,
+      rotV: (Math.random() - 0.5) * 0.14,
+      vy: 1.2 + Math.random() * 2.2,
+      vx: (Math.random() - 0.5) * 1.4,
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      alpha: 0.85 + Math.random() * 0.15,
+    });
+  }
+
+  let alive = true;
+  // Stop if screen changes
+  const stopCheck = setInterval(function() {
+    if (document.getElementById('win10-screen').style.display === 'none') {
+      alive = false; clearInterval(stopCheck);
+    }
+  }, 500);
+
+  function draw() {
+    if (!alive) { ctx2.clearRect(0,0,W2,H2); return; }
+    ctx2.clearRect(0,0,W2,H2);
+    pieces.forEach(function(p) {
+      p.x   += p.vx;
+      p.y   += p.vy;
+      p.rot += p.rotV;
+      if (p.y > H2 + 20) { p.y = -20; p.x = Math.random() * W2; }
+      ctx2.save();
+      ctx2.translate(p.x, p.y);
+      ctx2.rotate(p.rot);
+      ctx2.globalAlpha = p.alpha;
+      ctx2.fillStyle   = p.color;
+      ctx2.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+      ctx2.restore();
+    });
+    ctx2.globalAlpha = 1;
+    requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+function fullReset() {
+  // Stop engine
+  if (runner) Runner.stop(runner);
+  if (render) Render.stop(render);
+  // Reset all state
+  currentLevelIdx = 0;
+  score = 0;
+  landedItems = [];
+  particles = [];
+  floatingTexts.length = 0;
+  isGameOver = false;
+  // Hide all game screens
+  document.getElementById('win-screen').style.display       = 'none';
+  document.getElementById('win10-screen').style.display     = 'none';
+  document.getElementById('gameover-screen').style.display  = 'none';
+  document.getElementById('hud').style.display              = 'none';
+  document.getElementById('score-bar').style.display        = 'none';
+  document.getElementById('countdown-wrap').style.display   = 'none';
+  document.getElementById('tilt-warn').classList.remove('show');
+  document.getElementById('levelselect-screen').style.display = 'none';
+  // Remove any canvas
+  const old = document.getElementById('game-wrap').querySelector('canvas');
+  if (old) old.remove();
+  // Back to cover
+  document.getElementById('start-screen').style.display = 'flex';
+  document.getElementById('tutorial-screen').style.display = 'none';
+}
+
+function retryLevel() {
+  clearTimeout(window._winAdvTimer);
+  smoothX = W / 2;
+  score = 0;
+  landedItems = [];
+  document.getElementById('gameover-screen').style.display = 'none';
+  document.getElementById('win-screen').style.display = 'none';
+  document.getElementById('win10-screen').style.display = 'none';
+  setupLevel();
+}
+
+function resetGame() {
+  clearTimeout(window._winAdvTimer);
+  currentLevelIdx = 0;
+  smoothX = W / 2;
+  score = 0;
+  landedItems = [];
+  document.getElementById('gameover-screen').style.display = 'none';
+  document.getElementById('win-screen').style.display = 'none';
+  document.getElementById('win10-screen').style.display = 'none';
+  showLevelSelect();
+}
+
+function goToLevelSelect() {
+  clearTimeout(window._winAdvTimer);
+  if (runner) Runner.stop(runner);
+  if (render) Render.stop(render);
+  score = 0;
+  landedItems = [];
+  document.getElementById('gameover-screen').style.display = 'none';
+  document.getElementById('win-screen').style.display = 'none';
+  document.getElementById('win10-screen').style.display = 'none';
+  document.getElementById('hud').style.display = 'none';
+  document.getElementById('score-bar').style.display = 'none';
+  document.getElementById('countdown-wrap').style.display = 'none';
+  document.getElementById('tilt-warn').classList.remove('show');
+  const old = document.getElementById('game-wrap').querySelector('canvas');
+  if (old) old.remove();
+  showLevelSelect();
+}
+</script>
+</body>
+</html>
